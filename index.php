@@ -121,6 +121,8 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         .app-main { flex: 1 1 auto; min-width: 0; }
         @media (min-width: 992px) {
             #folderSidebar { flex: 0 0 270px; max-width: 270px; }
+            /* Sticky only moves inside its parent: the body spans the full sidebar height, so the tree stays in view */
+            #folderSidebar .offcanvas-body { height: 100%; }
             #folderSidebar .tree-card { position: sticky; top: 76px; max-height: calc(100vh - 92px); overflow-y: auto; }
         }
         .tree { list-style: none; margin: 0; padding: 0; }
