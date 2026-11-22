@@ -170,6 +170,12 @@ function folderCardHtml(node) {
 // no image at all) becomes a drawn tile, so the browser never contacts another site.
 function isLocalImage(src) { return !!src && !/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(src); }
 
+// Favicon through this server; v=2 marks the cache with large icons, so the
+// browser does not keep showing a 16 px icon it cached before.
+function iconUrl(domain) { return `icon.php?d=${encodeURIComponent(domain)}&v=2`; }
+
+// Tile without preview image: the site's icon, or the first letter if it has none.
+// Icons under 48 px are doubled pixel-sharp instead of being blurred up.
 function previewHtml(b, id, domain) {
     if (isLocalImage(b.image)) {
         return `<img src="${esc(b.image)}" id="img-${id}" class="card-img-top bg-body-tertiary" alt="" loading="lazy" draggable="false">`;
@@ -177,15 +183,17 @@ function previewHtml(b, id, domain) {
     const name = (domain || b.title || '?').replace(/^www\./, '');
     let hue = 0;
     for (const ch of name) hue = (hue * 31 + ch.codePointAt(0)) % 360;
+    const icon = domain ? `<img class="tile-icon" src="${iconUrl(domain)}" alt="" loading="lazy" draggable="false"
+        onload="if (this.naturalWidth < 48) this.classList.add('small')" onerror="this.remove()">` : '';
     return `<div id="img-${id}" class="card-img-top preview-tile" style="--tile-hue: ${hue}">
-        <span class="tile-letter">${esc([...name][0].toUpperCase())}</span><span class="tile-domain">${esc(name)}</span></div>`;
+        ${icon}<span class="tile-letter">${esc([...name][0].toUpperCase())}</span><span class="tile-domain">${esc(name)}</span></div>`;
 }
 
 function bookmarkCardHtml(b, isSearch) {
     const id = esc(b.id);
     let domain = '';
     try { domain = new URL(b.url).hostname; } catch (e) {}
-    const favicon = domain ? `<img src="icon.php?d=${encodeURIComponent(domain)}" onerror="this.style.display='none'" class="me-2 rounded" style="width: 16px; height: 16px;" alt="" loading="lazy" draggable="false">` : '';
+    const favicon = domain ? `<img src="${iconUrl(domain)}" onerror="this.style.display='none'" class="me-2 rounded" style="width: 16px; height: 16px;" alt="" loading="lazy" draggable="false">` : '';
     const tags = b.category.split(',').map(t => t.trim()).filter(Boolean)
         .map(t => `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle badge-soft me-1 mb-1">${esc(t)}</span>`).join('');
     const folderBadge = isSearch ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle badge-soft me-1 mb-1"><i class="bi bi-folder-fill me-1"></i>${esc(b.folderPath || 'Home')}</span>` : '';

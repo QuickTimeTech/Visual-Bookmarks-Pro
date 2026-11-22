@@ -57,8 +57,13 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         [data-bs-theme="dark"] .preview-tile { background: linear-gradient(135deg, hsl(var(--tile-hue) 35% 24%), hsl(calc(var(--tile-hue) + 40) 35% 17%)); color: hsl(var(--tile-hue) 60% 82%); }
         .preview-tile .tile-letter { font-size: 3.5rem; font-weight: 700; line-height: 1; }
         .preview-tile .tile-domain { font-size: 0.85rem; opacity: 0.8; max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .preview-tile .tile-icon { width: 72px; height: 72px; padding: 10px; object-fit: contain; background: #fff; border-radius: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+        .preview-tile .tile-icon.small { padding: 20px; image-rendering: pixelated; }
+        .preview-tile:has(.tile-icon) .tile-letter { display: none; }
         .list-view-active .preview-tile .tile-letter { font-size: 1.75rem; }
         .list-view-active .preview-tile .tile-domain { display: none; }
+        .list-view-active .preview-tile .tile-icon { width: 44px; height: 44px; padding: 6px; border-radius: 10px; }
+        .list-view-active .preview-tile .tile-icon.small { padding: 6px; }
         .bulk-checkbox-container { position: absolute; top: 12px; left: 12px; z-index: 10; background: var(--bs-body-bg); border-radius: 6px; padding: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; }
         
         /* Enhanced List View */

@@ -437,11 +437,16 @@ function fetchPageMeta($url) {
     }
     if (preg_match_all('~<link\b[^>]*>~i', $html, $links)) {
         foreach ($links[0] as $tag) {
-            $rel = ' ' . strtolower((string)htmlAttribute($tag, 'rel')) . ' ';
-            $href = htmlAttribute($tag, 'href');
-            if ($href && (str_contains($rel, ' icon ') || str_contains($rel, ' apple-touch-icon '))) {
-                $meta['icons'][] = absoluteUrl($href, $r['url']);
-            }
+            $rel = ' ' . preg_replace('~\s+~', ' ', strtolower((string)htmlAttribute($tag, 'rel'))) . ' ';
+            $href = trim((string)htmlAttribute($tag, 'href'));
+            $touch = str_contains($rel, ' apple-touch-icon ') || str_contains($rel, ' apple-touch-icon-precomposed ');
+            if ($href === '' || (!$touch && !str_contains($rel, ' icon '))) continue;
+            if (preg_match('~\.svg([?#]|$)~i', $href)) continue; // refused by imageExtension anyway
+            // Declared size in pixels; touch icons without "sizes" are usually 180 px; 0 = unknown.
+            $size = 0;
+            if (preg_match_all('~(\d+)x\d+~i', (string)htmlAttribute($tag, 'sizes'), $s)) $size = max(array_map('intval', $s[1]));
+            elseif ($touch) $size = 180;
+            $meta['icons'][] = ['url' => absoluteUrl($href, $r['url']), 'size' => $size];
         }
     }
     return $meta;
@@ -503,25 +508,40 @@ function faviconBytes($url) {
     return $ok ? $r['body'] : null;
 }
 
+// Sort key for declared icon sizes: the smallest icon of at least 96 px first
+// (sharp on the tile, not needlessly big), then smaller ones from large to
+// small, unknown sizes last.
+function iconRank($size) {
+    return $size >= 96 ? $size : ($size > 0 ? 100000 - $size : 200000);
+}
+
 // Favicon of a host, fetched once by the server and kept for 30 days; misses are
-// remembered for 3 days. File names are keyed hashes, so nobody can probe the
-// folder for the domains you saved. Returns the file path or null.
+// remembered for 3 days. Large icons declared by the home page come first, as
+// the tile shows the icon at up to 72 px and favicon.ico is often 16 px only.
+// File names are keyed hashes, so nobody can probe the folder for the domains
+// you saved. Returns the file path or null.
 function cachedFavicon(PDO $pdo, $host) {
     global $iconDir;
     $host = strtolower(trim((string)$host));
     if ($host === '' || strlen($host) > 253 || !preg_match('~^[a-z0-9.-]+$~', $host)) return null;
-    $base = $iconDir . hash_hmac('sha256', $host, appSecret($pdo, 'icon_key'));
+    $key = appSecret($pdo, 'icon_key');
+    $base = $iconDir . hash_hmac('sha256', 'v2:' . $host, $key);
     foreach (glob($base . '.*') ?: [] as $file) {
         $miss = str_ends_with($file, '.none');
         if (filemtime($file) > time() - ($miss ? 3 : 30) * 86400) return $miss ? null : $file;
         @unlink($file);
     }
-    $bytes = faviconBytes('https://' . $host . '/favicon.ico');
-    if ($bytes === null) {
-        foreach (array_slice(fetchPageMeta('https://' . $host . '/')['icons'], 0, 3) as $iconUrl) {
-            if (($bytes = faviconBytes($iconUrl)) !== null) break;
-        }
+    $icons = fetchPageMeta('https://' . $host . '/')['icons'];
+    usort($icons, fn($a, $b) => iconRank($a['size']) <=> iconRank($b['size']));
+    $large = array_column(array_filter($icons, fn($i) => $i['size'] >= 48), 'url');
+    $small = array_column(array_filter($icons, fn($i) => $i['size'] < 48), 'url');
+    $candidates = array_merge(array_slice($large, 0, 3), ['https://' . $host . '/favicon.ico'], $small);
+    $bytes = null;
+    foreach (array_slice(array_values(array_unique($candidates)), 0, 5) as $iconUrl) {
+        if (($bytes = faviconBytes($iconUrl)) !== null) break;
     }
+    // Icons cached before large icons were preferred (names without "v2:").
+    foreach (glob($iconDir . hash_hmac('sha256', $host, $key) . '.*') ?: [] as $old) @unlink($old);
     if ($bytes === null) { touch($base . '.none'); return null; }
     $file = $base . '.' . imageExtension($bytes);
     file_put_contents($file, $bytes);
