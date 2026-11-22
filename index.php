@@ -119,11 +119,19 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         /* Layout with folder tree */
         .app-layout { display: flex; gap: 1.5rem; }
         .app-main { flex: 1 1 auto; min-width: 0; }
+        .sidebar-resizer { display: none; } /* shown on large screens only */
         @media (min-width: 992px) {
-            #folderSidebar { flex: 0 0 270px; max-width: 270px; }
+            /* Width set by dragging the handle (app.js), 270px by default */
+            #folderSidebar { position: relative; flex: 0 0 var(--sidebar-width, 270px); max-width: min(var(--sidebar-width, 270px), 50vw); }
             /* Sticky only moves inside its parent: the body spans the full sidebar height, so the tree stays in view */
             #folderSidebar .offcanvas-body { height: 100%; }
-            #folderSidebar .tree-card { position: sticky; top: 76px; max-height: calc(100vh - 92px); overflow-y: auto; }
+            #folderSidebar .tree-sticky { position: sticky; top: 76px; }
+            #folderSidebar .tree-card { max-height: calc(100vh - 92px); overflow-y: auto; }
+            .sidebar-resizer { display: block; position: absolute; top: 0; bottom: 0; right: -12px; width: 10px; cursor: col-resize; touch-action: none; z-index: 5; }
+            .sidebar-resizer::after { content: ""; position: absolute; top: 10px; bottom: 10px; left: 1px; width: 3px; border-radius: 2px; background: transparent; transition: background-color 0.15s ease; }
+            .sidebar-resizer:hover::after, .sidebar-resizer:focus-visible::after, .resizing-sidebar .sidebar-resizer::after { background: var(--bs-primary); }
+            .sidebar-resizer:focus-visible { outline: none; }
+            .resizing-sidebar, .resizing-sidebar * { cursor: col-resize !important; user-select: none !important; }
         }
         .tree { list-style: none; margin: 0; padding: 0; }
         .tree .tree { padding-left: 0.9rem; margin-left: 0.55rem; border-left: 1px solid var(--bs-border-color-translucent); }
@@ -225,6 +233,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
             <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#folderSidebar"></button>
         </div>
         <div class="offcanvas-body d-block p-3 p-lg-0">
+          <div class="tree-sticky">
             <div class="card border-0 shadow-sm p-2 tree-card">
                 <div class="d-flex align-items-center justify-content-between px-2 pt-1 pb-2">
                     <span class="fw-bold text-muted small text-uppercase">Folders</span>
@@ -232,6 +241,9 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
                 </div>
                 <div id="folderTree"></div>
             </div>
+            <div class="sidebar-resizer" id="sidebarResizer" role="separator" aria-orientation="vertical" aria-label="Resize folder panel"
+                 aria-valuemin="200" aria-valuemax="560" aria-valuenow="270" tabindex="0" title="Drag to resize, double-click to reset"></div>
+          </div>
         </div>
     </aside>
 

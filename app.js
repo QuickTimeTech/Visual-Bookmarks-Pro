@@ -714,6 +714,49 @@ layoutToggle?.addEventListener('click', () => {
     layoutToggle.innerHTML = isList ? '<i class="bi bi-grid fs-5"></i>' : '<i class="bi bi-list-task fs-5"></i>';
 });
 
+// --- Resizable folder sidebar (large screens only), width kept in this browser only ---
+// The 50vw cap applies while dragging and in CSS, not on load: a page opened in a
+// narrow window must not shorten the stored width.
+const SIDEBAR_DEFAULT = 270, SIDEBAR_MIN = 200, SIDEBAR_MAX = 560;
+const sidebarEl = document.getElementById('folderSidebar'), sidebarResizer = document.getElementById('sidebarResizer');
+function setSidebarWidth(px, { save = false, capToViewport = true } = {}) {
+    const max = capToViewport ? Math.min(SIDEBAR_MAX, window.innerWidth * 0.5) : SIDEBAR_MAX;
+    const w = Math.round(Math.max(SIDEBAR_MIN, Math.min(px, max)));
+    sidebarEl.style.setProperty('--sidebar-width', w + 'px');
+    sidebarResizer.setAttribute('aria-valuenow', w);
+    if (save) { try { localStorage.setItem('sidebarWidth', String(w)); } catch (e) {} }
+}
+try { const w = parseInt(localStorage.getItem('sidebarWidth'), 10); if (w) setSidebarWidth(w, { capToViewport: false }); } catch (e) {}
+
+let sidebarDrag = null;
+sidebarResizer.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    sidebarDrag = { x: e.clientX, w: sidebarEl.getBoundingClientRect().width };
+    sidebarResizer.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing-sidebar');
+});
+sidebarResizer.addEventListener('pointermove', e => {
+    if (sidebarDrag) setSidebarWidth(sidebarDrag.w + e.clientX - sidebarDrag.x);
+});
+function endSidebarDrag() {
+    if (!sidebarDrag) return;
+    sidebarDrag = null;
+    document.body.classList.remove('resizing-sidebar');
+    setSidebarWidth(sidebarEl.getBoundingClientRect().width, { save: true });
+}
+['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => sidebarResizer.addEventListener(type, endSidebarDrag));
+sidebarResizer.addEventListener('dblclick', () => {
+    setSidebarWidth(SIDEBAR_DEFAULT);
+    try { localStorage.removeItem('sidebarWidth'); } catch (e) {}
+});
+sidebarResizer.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const step = (e.shiftKey ? 40 : 10) * (e.key === 'ArrowLeft' ? -1 : 1);
+    setSidebarWidth(sidebarEl.getBoundingClientRect().width + step, { save: true });
+});
+
 let searchTimeout;
 document.getElementById('searchInput').addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(() => loadBookmarks(true), 300); });
 document.getElementById('filterCategory').addEventListener('change', () => loadBookmarks(true));
