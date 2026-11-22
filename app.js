@@ -760,7 +760,16 @@ sidebarResizer.addEventListener('keydown', e => {
 let searchTimeout;
 document.getElementById('searchInput').addEventListener('input', () => { clearTimeout(searchTimeout); searchTimeout = setTimeout(() => loadBookmarks(true), 300); });
 document.getElementById('filterCategory').addEventListener('change', () => loadBookmarks(true));
-document.getElementById('sortOrder').addEventListener('change', () => loadBookmarks(true));
+// Sort order, kept in this browser only; restored before the first load
+const sortSelect = document.getElementById('sortOrder');
+try {
+    const savedSort = localStorage.getItem('sortOrder');
+    if (savedSort && [...sortSelect.options].some(o => o.value === savedSort)) sortSelect.value = savedSort;
+} catch (e) {}
+sortSelect.addEventListener('change', () => {
+    try { localStorage.setItem('sortOrder', sortSelect.value); } catch (e) {}
+    loadBookmarks(true);
+});
 
 function toggleLoading(show) { document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none'; }
 
