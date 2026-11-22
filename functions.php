@@ -313,6 +313,29 @@ function importBookmarkHtml(PDO $pdo, $html, $baseFolder = IMPORT_FOLDER) {
 // favicons once and stores them, so the browser never loads anything foreign.
 const FETCH_USER_AGENT = 'Mozilla/5.0 (compatible; VisualBookmarks/1.0)';
 
+// True for a public internet address. filter_var's range flags let some IPv6
+// forms of internal addresses through (php-src PR #25426), so IPv6 addresses
+// that embed an IPv4 address, site-local and multicast are refused outright;
+// no public website needs them. inet_pton also normalises a dotted IPv4 suffix.
+function isPublicIp($ip) {
+    if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE)) return false;
+    $bin = @inet_pton($ip);
+    if ($bin === false) return false;
+    if (strlen($bin) === 4) return true;
+    foreach ([
+        str_repeat("\0", 12),                  // ::/96 IPv4-compatible
+        str_repeat("\0", 10) . "\xff\xff",     // ::ffff:0:0/96 IPv4-mapped
+        str_repeat("\0", 8) . "\xff\xff\0\0",  // ::ffff:0:0:0/96 IPv4-translated
+        "\x00\x64\xff\x9b",                    // 64:ff9b::/32 NAT64 (RFC 6052, RFC 8215)
+        "\x20\x02",                            // 2002::/16 6to4
+    ] as $prefix) {
+        if (str_starts_with($bin, $prefix)) return false;
+    }
+    if ($bin[0] === "\xff") return false;                               // ff00::/8 multicast
+    if ($bin[0] === "\xfe" && (ord($bin[1]) & 0xc0) === 0xc0) return false; // fec0::/10 site-local
+    return true;
+}
+
 // Addresses of a host, or [] if any of them is not a public internet address.
 // Keeps requests out of the server's own networks (containers, VPN, localhost).
 function publicAddressesOf($host) {
@@ -326,7 +349,7 @@ function publicAddressesOf($host) {
         }
     }
     foreach ($ips as $ip) {
-        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE)) return [];
+        if (!isPublicIp($ip)) return [];
     }
     return $ips;
 }
