@@ -11,13 +11,20 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     ");
 }
 
+// The session cookie also travels with links from foreign pages. Only the
+// token from your own bookmarklet proves that you triggered the call.
+if (!hash_equals(bookmarkletToken($pdo), (string)($_GET['token'] ?? ''))) {
+    http_response_code(403);
+    die("<div style='font-family: sans-serif; text-align: center; padding: 20px;'><h3 style='color: #dc3545;'>❌ Invalid token</h3><p>Please install the current bookmarklet from the admin dashboard.</p></div>");
+}
+
 $url = filter_var($_GET['url'] ?? '', FILTER_SANITIZE_URL);
-$category = ''; 
-$folder = 'Uncategorized';
+$category = '';
+$folder = ROOT_FOLDER;
 $status = 'saving';
 $message = '';
 
-if (filter_var($url, FILTER_VALIDATE_URL)) {
+if (isValidBookmarkUrl($url)) {
     $stmt = $pdo->prepare("SELECT id FROM bookmarks WHERE url = ?");
     $stmt->execute([$url]);
     
@@ -26,7 +33,7 @@ if (filter_var($url, FILTER_VALIDATE_URL)) {
         $message = 'Already in your bookmarks!';
     } else {
         $imagePath = takeScreenshot($url);
-        $title = getWebpageTitle($url);
+        $title = htmlspecialchars(getWebpageTitle($url));
         
         $stmt = $pdo->prepare("INSERT INTO bookmarks (title, url, image, category, folder) VALUES (?, ?, ?, ?, ?)");
         $stmt->execute([$title, $url, $imagePath, $category, $folder]);

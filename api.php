@@ -23,7 +23,7 @@ if ($action === 'admin_process' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($bookmark) {
         $online = isWebsiteOnline($bookmark['url']);
-        if (file_exists(__DIR__ . '/' . $bookmark['image'])) @unlink(__DIR__ . '/' . $bookmark['image']);
+        deleteScreenshot($bookmark['image']);
         $imgResult = takeScreenshotAdmin($bookmark['url']);
         $pdo->prepare("UPDATE bookmarks SET image = ? WHERE id = ?")->execute([$imgResult['path'], $id]);
         echo json_encode(['success' => true, 'online' => $online, 'has_image' => $imgResult['success']]);
@@ -36,25 +36,28 @@ if ($action === 'admin_process' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($action === 'load') {
     $limit = isset($_GET['limit']) ? max(1, (int)$_GET['limit']) : 20;
     $offset = isset($_GET['offset']) ? max(0, (int)$_GET['offset']) : 0;
-    $search = $_GET['search'] ?? '';
-    $tagFilter = $_GET['category'] ?? 'All'; 
-    $folderFilter = $_GET['folder'] ?? 'All';
+    $search = trim($_GET['search'] ?? '');
+    $tagFilter = $_GET['category'] ?? 'All';
+    $allFolders = ($_GET['all'] ?? '') === '1';
+    $folder = folderPathFromInput($_GET['folder'] ?? '');
     $sort = $_GET['sort'] ?? 'date';
 
     $query = "SELECT id, title, url, image, category, folder, views, added_at FROM bookmarks WHERE 1=1";
     $params = [];
 
     if ($search !== '') {
+        // Titles, tags and folders are stored escaped, URLs are not.
+        $escaped = '%' . htmlspecialchars($search) . '%';
         $query .= " AND (title LIKE ? OR url LIKE ? OR category LIKE ? OR folder LIKE ?)";
-        $params[] = "%$search%"; $params[] = "%$search%"; $params[] = "%$search%"; $params[] = "%$search%";
+        array_push($params, $escaped, "%$search%", $escaped, $escaped);
     }
     if ($tagFilter !== 'All') {
         $query .= " AND category LIKE ?";
-        $params[] = "%$tagFilter%";
+        $params[] = '%' . htmlspecialchars($tagFilter) . '%';
     }
-    if ($folderFilter !== 'All') {
-        $query .= " AND folder = ?";
-        $params[] = $folderFilter;
+    if (!$allFolders) {
+        $query .= $folder === ROOT_FOLDER ? " AND (folder = ? OR folder = '' OR folder IS NULL)" : " AND folder = ?";
+        $params[] = $folder;
     }
 
     if ($sort === 'views') {
@@ -82,23 +85,55 @@ if ($action === 'load') {
     $uniqueTags = array_values(array_unique(array_filter($allTags)));
     sort($uniqueTags);
     
-    // Fetch folders with their file counts
+    // All folders (full paths) with the number of bookmarks directly inside
+    repairFolderAncestors($pdo);
     $folderStmt = $pdo->query("SELECT f.name, COUNT(b.id) as count FROM folders f LEFT JOIN bookmarks b ON f.name = b.folder GROUP BY f.name ORDER BY f.name ASC");
     $folders = $folderStmt->fetchAll(PDO::FETCH_ASSOC);
+    $rootCount = (int)$pdo->query("SELECT COUNT(*) FROM bookmarks WHERE folder = 'Uncategorized' OR folder = '' OR folder IS NULL")->fetchColumn();
 
-    echo json_encode(['bookmarks' => $bookmarks, 'categories' => $uniqueTags, 'folders' => $folders]);
+    echo json_encode(['bookmarks' => $bookmarks, 'categories' => $uniqueTags, 'folders' => $folders, 'root_count' => $rootCount]);
     exit;
 }
 
-// NEW: Add Folder Endpoint
-if ($action === 'add_folder' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim(htmlspecialchars($_POST['name'] ?? ''));
-    if ($name && $name !== 'Uncategorized') {
-        $pdo->prepare("INSERT OR IGNORE INTO folders (name) VALUES (?)")->execute([$name]);
-        echo json_encode(['success' => true]);
-    } else {
-        echo json_encode(['success' => false, 'error' => 'Invalid folder name.']);
+// Folder endpoints. Paths arrive as raw text ("Music/Live", "" for the root).
+if ($action === 'folder_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $parent = folderPathFromInput($_POST['parent'] ?? '');
+    $name = folderPathFromInput($_POST['name'] ?? '');
+    if ($name === ROOT_FOLDER) { echo json_encode(['success' => false, 'error' => 'Invalid folder name.']); exit; }
+    $path = $parent === ROOT_FOLDER ? $name : $parent . '/' . $name;
+    if (folderExists($pdo, $path)) { echo json_encode(['success' => false, 'error' => 'This folder already exists.']); exit; }
+    ensureFolderPath($pdo, $path);
+    echo json_encode(['success' => true, 'path' => $path]);
+    exit;
+}
+
+if ($action === 'folder_rename' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $path = folderPathFromInput($_POST['path'] ?? '');
+    $rawName = trim($_POST['name'] ?? '');
+    if ($rawName === '' || str_contains($rawName, '/')) {
+        echo json_encode(['success' => false, 'error' => 'Folder names must not be empty or contain "/".']); exit;
     }
+    $parent = parentFolderPath($path);
+    $name = htmlspecialchars($rawName);
+    $new = $parent === ROOT_FOLDER ? $name : $parent . '/' . $name;
+    $error = $new === ROOT_FOLDER ? 'Invalid folder name.' : moveFolder($pdo, $path, $new);
+    echo json_encode($error ? ['success' => false, 'error' => $error] : ['success' => true, 'path' => $new]);
+    exit;
+}
+
+if ($action === 'folder_move' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $path = folderPathFromInput($_POST['path'] ?? '');
+    $target = folderPathFromInput($_POST['target'] ?? '');
+    $base = folderBaseName($path);
+    $new = $target === ROOT_FOLDER ? $base : "$target/$base";
+    $error = moveFolder($pdo, $path, $new);
+    echo json_encode($error ? ['success' => false, 'error' => $error] : ['success' => true, 'path' => $new]);
+    exit;
+}
+
+if ($action === 'folder_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    $result = deleteFolder($pdo, folderPathFromInput($_POST['path'] ?? ''));
+    echo json_encode(isset($result['error']) ? ['success' => false, 'error' => $result['error']] : ['success' => true] + $result);
     exit;
 }
 
@@ -110,19 +145,18 @@ if ($action === 'click' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if ($action === 'add' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $url = filter_var($_POST['url'] ?? '', FILTER_SANITIZE_URL);
+    $url = filter_var(trim($_POST['url'] ?? ''), FILTER_SANITIZE_URL);
     $tags = htmlspecialchars($_POST['category'] ?? '');
-    $folder = htmlspecialchars($_POST['folder'] ?? 'Uncategorized');
+    $folder = folderPathFromInput($_POST['folder'] ?? '');
 
-    if (filter_var($url, FILTER_VALIDATE_URL)) {
+    if (isValidBookmarkUrl($url)) {
         $stmt = $pdo->prepare("SELECT id FROM bookmarks WHERE url = ?");
         $stmt->execute([$url]);
         if (!$stmt->fetch()) {
-            if ($folder !== 'Uncategorized' && $folder !== '') {
-                $pdo->prepare("INSERT OR IGNORE INTO folders (name) VALUES (?)")->execute([$folder]);
-            }
+            ensureFolderPath($pdo, $folder);
             $imagePath = takeScreenshot($url);
-            $title = getWebpageTitle($url);
+            // The page title comes from a foreign page: store it escaped like all other texts.
+            $title = htmlspecialchars(getWebpageTitle($url));
             $pdo->prepare("INSERT INTO bookmarks (title, url, image, category, folder) VALUES (?, ?, ?, ?, ?)")
                 ->execute([$title, $url, $imagePath, $tags, $folder]);
             echo json_encode(['success' => true]);
@@ -138,25 +172,22 @@ if ($action === 'add' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 if ($action === 'bulk' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $ids = json_decode($_POST['ids'] ?? '[]');
     $task = $_POST['task'] ?? '';
-    if (empty($ids)) { echo json_encode(['success' => false]); exit; }
+    if (!is_array($ids) || empty($ids)) { echo json_encode(['success' => false]); exit; }
+    $ids = array_values(array_map('intval', $ids));
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
 
     if ($task === 'delete') {
         $stmt = $pdo->prepare("SELECT image FROM bookmarks WHERE id IN ($placeholders)");
         $stmt->execute($ids);
-        foreach ($stmt->fetchAll() as $row) {
-            if (file_exists(__DIR__ . '/' . $row['image'])) unlink(__DIR__ . '/' . $row['image']);
-        }
+        foreach ($stmt->fetchAll() as $row) deleteScreenshot($row['image']);
         $pdo->prepare("DELETE FROM bookmarks WHERE id IN ($placeholders)")->execute($ids);
     } elseif ($task === 'retag') {
         $newTags = htmlspecialchars($_POST['new_tags'] ?? '');
         $params = array_merge([$newTags], $ids);
         $pdo->prepare("UPDATE bookmarks SET category = ? WHERE id IN ($placeholders)")->execute($params);
     } elseif ($task === 'refolder') {
-        $newFolder = htmlspecialchars($_POST['new_folder'] ?? 'Uncategorized');
-        if ($newFolder !== 'Uncategorized' && $newFolder !== '') {
-            $pdo->prepare("INSERT OR IGNORE INTO folders (name) VALUES (?)")->execute([$newFolder]);
-        }
+        $newFolder = folderPathFromInput($_POST['new_folder'] ?? '');
+        ensureFolderPath($pdo, $newFolder);
         $params = array_merge([$newFolder], $ids);
         $pdo->prepare("UPDATE bookmarks SET folder = ? WHERE id IN ($placeholders)")->execute($params);
     }
@@ -197,7 +228,7 @@ if ($action === 'refresh' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $bookmark = $stmt->fetch();
 
     if ($bookmark) {
-        if (file_exists(__DIR__ . '/' . $bookmark['image'])) unlink(__DIR__ . '/' . $bookmark['image']);
+        deleteScreenshot($bookmark['image']);
         $newImage = takeScreenshot($bookmark['url']);
         $pdo->prepare("UPDATE bookmarks SET image = ? WHERE id = ?")->execute([$newImage, $id]);
         echo json_encode(['success' => true, 'newImage' => $newImage]);
@@ -209,23 +240,23 @@ if ($action === 'refresh' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if ($action === 'edit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $id = $_POST['id'] ?? 0;
-    $newUrl = filter_var($_POST['url'] ?? '', FILTER_SANITIZE_URL);
+    $newUrl = filter_var(trim($_POST['url'] ?? ''), FILTER_SANITIZE_URL);
     $newTitle = htmlspecialchars($_POST['title'] ?? '');
     $newTags = htmlspecialchars($_POST['category'] ?? '');
-    $newFolder = htmlspecialchars($_POST['folder'] ?? 'Uncategorized');
+    $newFolder = folderPathFromInput($_POST['folder'] ?? '');
+
+    if (!isValidBookmarkUrl($newUrl)) { echo json_encode(['success' => false, 'error' => 'Invalid URL']); exit; }
 
     $stmt = $pdo->prepare("SELECT * FROM bookmarks WHERE id = ?");
     $stmt->execute([$id]);
     $bookmark = $stmt->fetch();
 
     if ($bookmark) {
-        if ($newFolder !== 'Uncategorized' && $newFolder !== '') {
-            $pdo->prepare("INSERT OR IGNORE INTO folders (name) VALUES (?)")->execute([$newFolder]);
-        }
+        ensureFolderPath($pdo, $newFolder);
         $imagePath = $bookmark['image'];
-        if ($bookmark['url'] !== $newUrl && filter_var($newUrl, FILTER_VALIDATE_URL)) {
+        if ($bookmark['url'] !== $newUrl) {
             $imagePath = takeScreenshot($newUrl);
-            if (file_exists(__DIR__ . '/' . $bookmark['image'])) unlink(__DIR__ . '/' . $bookmark['image']);
+            deleteScreenshot($bookmark['image']);
         }
         $pdo->prepare("UPDATE bookmarks SET title = ?, url = ?, image = ?, category = ?, folder = ? WHERE id = ?")
             ->execute([$newTitle, $newUrl, $imagePath, $newTags, $newFolder, $id]);
@@ -243,7 +274,7 @@ if ($action === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $bookmark = $stmt->fetch();
 
     if ($bookmark) {
-        if (file_exists(__DIR__ . '/' . $bookmark['image'])) unlink(__DIR__ . '/' . $bookmark['image']);
+        deleteScreenshot($bookmark['image']);
         $pdo->prepare("DELETE FROM bookmarks WHERE id = ?")->execute([$id]);
         echo json_encode(['success' => true]);
         exit;
