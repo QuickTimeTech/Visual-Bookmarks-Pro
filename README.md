@@ -12,6 +12,7 @@ Visual Bookmarks Pro is a secure, self-hosted PHP/SQLite web application that tr
 * **Privacy:** No referrer is sent, Bootstrap is served locally, icons and previews are fetched by the server, and a Content-Security-Policy keeps the page to its own origin. Server-side fetches only reach public addresses.
 * **Bulk Management:** Select multiple bookmarks to delete, move to new folders, or apply new tags all at once using the floating action bar.
 * **Master Password Security:** The entire application and its API are locked behind a session-based master password to keep your data private.
+* **Read-only Sharing:** An optional view password lets others browse, search and open your links without being able to change anything. The server enforces it, and their visits do not count towards the view statistics.
 * **Admin Batch Scanner:** A built-in dashboard tests the uptime of all saved links, force-refreshes missing screenshots, and allows you to bulk-delete dead websites with one click.
 * **Browser Integration:** Includes a simple drag-and-drop bookmarklet with a per-installation token for your browser's bookmarks bar, allowing you to save any site in one click without leaving the page.
 * **HTML Import:** Easily migrate from Chrome, Safari, Firefox, or Edge by importing your standard HTML bookmarks file; its folder structure is kept.
@@ -32,6 +33,7 @@ To run Visual Bookmarks Pro, your web server must support the following:
    * Open `functions.php` in a text editor.
    * Locate the `$MASTER_PASSWORD = 'admin';` variable at the top of the file.
    * Change `'admin'` to a secure password of your choice.
+   * Optional: set `$VIEW_PASSWORD` to a second, different password to give others read-only access. Left empty, there is no guest access.
 3. **Run the App:** Navigate to the folder in your web browser (e.g., `http://localhost/visual-bookmarks/`).
 4. **Auto-Setup:** Upon your first login, the application will automatically create the `database.sqlite` file and the `screenshots` and `icons` directories if they do not already exist.
 

@@ -9,6 +9,14 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
 
 $action = $_GET['action'] ?? '';
 
+// Read-only guests may load bookmarks and nothing else; not even their clicks
+// are counted, so they cannot change the "Most Views" order.
+if (sessionRole() !== 'admin' && $action !== 'load') {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'error' => 'Read-only access.']);
+    exit;
+}
+
 if ($action === 'admin_list') {
     $stmt = $pdo->query("SELECT id, title, url FROM bookmarks ORDER BY added_at DESC");
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));

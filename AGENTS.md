@@ -8,7 +8,7 @@ A self-hosted bookmark manager in plain PHP and SQLite with a single-page client
 - [index.php](index.php): login page, the markup of the whole app, all CSS in one `<style>` block, and the bookmarklet code
 - [app.js](app.js): all client logic, divided by `// --- … ---` comments into helpers, tree model, rendering, loading, navigation, delegated clicks, drag & drop, folder, bookmark and bulk actions, admin scanner and misc UI
 - [api.php](api.php): JSON API, one `action` parameter per request: `load`, `add`, `edit`, `delete`, `click`, `refresh`, `bulk`, `import`, `folder_create`, `folder_rename`, `folder_move`, `folder_delete`, `admin_list`, `admin_process`
-- [functions.php](functions.php): configuration (`$MASTER_PASSWORD`), database setup and upgrades, folder helpers, the bookmark-file import parser, server-side fetching, previews and the favicon cache
+- [functions.php](functions.php): configuration (`$MASTER_PASSWORD`, `$VIEW_PASSWORD`), database setup and upgrades, folder helpers, the bookmark-file import parser, server-side fetching, previews and the favicon cache
 - [save.php](save.php): endpoint of the bookmarklet popup, protected by a per-installation token
 - [icon.php](icon.php): serves site icons from the server-side cache
 - [vendor/](vendor/): Bootstrap 5.3.0 and Bootstrap Icons 1.11.1 (MIT), served locally
@@ -33,6 +33,14 @@ A self-hosted bookmark manager in plain PHP and SQLite with a single-page client
 - The client decodes API text once with `decodeHtml()` (a `textarea` element) and paths with `folderFromApi()`, which also maps `Uncategorized` to the empty root path. Every value that goes into HTML passes through `esc()`.
 - Clicks are delegated from containers; do not put data into inline event handlers.
 - Only http and https URLs are accepted (`isValidBookmarkUrl()`).
+
+
+---
+
+# Access
+- Two passwords in [functions.php](functions.php): `$MASTER_PASSWORD` for the admin and the optional `$VIEW_PASSWORD` for read-only guests, empty meaning no guest access. `loginRole()` maps a password to `admin` or `viewer`, the login stores it in `$_SESSION['role']`, and `sessionRole()` reads it. A session without a role counts as admin, because before the view password only the master password could open one.
+- The server enforces read-only access, the client only follows it: [api.php](api.php) refuses every action except `load` for guests, [save.php](save.php) refuses them entirely, [index.php](index.php) leaves out the editing markup and the bookmarklet token, and [icon.php](icon.php) serves guests only icons of hosts that appear among the bookmarks (`isBookmarkedHost()`), so they cannot make the server contact arbitrary sites.
+- In [app.js](app.js) `canEdit` is false when the body has the class `read-only`. It drops folder menus, checkboxes, edit buttons and drag & drop, and visits of guests are not counted. A new editing feature needs both: a check on the server and `canEdit` in the client.
 
 
 ---
@@ -67,7 +75,7 @@ Every server-side request goes through `fetchRemote()`:
 ---
 
 # Testing
-- Run it with PHP's built-in server from the repository root, for example `php -S 127.0.0.1:8080`. PHP 8.2 or newer with the SQLite (PDO) and cURL extensions is required. The default password in [functions.php](functions.php) is `admin`.
+- Run it with PHP's built-in server from the repository root, for example `php -S 127.0.0.1:8080`. PHP 8.2 or newer with the SQLite (PDO) and cURL extensions is required. The default password in [functions.php](functions.php) is `admin`; for guest access set `$VIEW_PASSWORD` in the test copy.
 - There is no automated test suite in the repository. At least run `php -l` on every changed PHP file and `node --check app.js`.
 - Headless Chromium reports `hover: none`, so the hover rules above do not apply there; inject the CSS when a test needs them.
 - Bootstrap's reboot sets `scroll-behavior: smooth`, so `window.scrollTo()` is animated and `scrollY` reads 0 right after it; pass `{behavior: 'instant'}` before measuring.

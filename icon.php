@@ -7,10 +7,16 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     http_response_code(403);
     exit;
 }
+$isAdmin = sessionRole() === 'admin';
 session_write_close(); // icons load in parallel; do not hold the session lock
 
-$file = cachedFavicon($pdo, (string)($_GET['d'] ?? ''));
+$domain = (string)($_GET['d'] ?? '');
 header('X-Content-Type-Options: nosniff');
+if (!$isAdmin && !isBookmarkedHost($pdo, $domain)) {
+    http_response_code(404);
+    exit;
+}
+$file = cachedFavicon($pdo, $domain);
 if (!$file) {
     header('Cache-Control: private, max-age=86400'); // a miss may be temporary
     http_response_code(404);

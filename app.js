@@ -19,11 +19,15 @@ let rootCount = 0;
 let folderPreviews = {};     // raw subfolder path => [{url, image}], up to 4 links for its card
 let dragPayload = null;      // {type: 'bookmarks', ids} or {type: 'folder', path}
 
-const addModal = new bootstrap.Modal(document.getElementById('addModal'));
-const editModal = new bootstrap.Modal(document.getElementById('editModal'));
-const folderModal = new bootstrap.Modal(document.getElementById('newFolderModal'));
-const moveModal = new bootstrap.Modal(document.getElementById('moveFolderModal'));
-const importModal = new bootstrap.Modal(document.getElementById('importModal'));
+// Read-only guests get no editing controls; the page leaves out their dialogs
+// and the server refuses every change anyway.
+const canEdit = !document.body.classList.contains('read-only');
+function modalFor(id) { const el = document.getElementById(id); return el ? new bootstrap.Modal(el) : null; }
+const addModal = modalFor('addModal');
+const editModal = modalFor('editModal');
+const folderModal = modalFor('newFolderModal');
+const moveModal = modalFor('moveFolderModal');
+const importModal = modalFor('importModal');
 const gridContainer = document.getElementById('bookmarkGrid');
 const folderContainer = document.getElementById('folderGrid');
 const treeContainer = document.getElementById('folderTree');
@@ -102,7 +106,11 @@ function folderOptionsHtml(excludePath = null) {
 }
 
 // --- Rendering ---
+// Drag source attributes of a folder; read-only guests cannot move anything.
+function folderDragAttrs(p) { return canEdit ? ` data-drag-folder="${p}" draggable="true"` : ''; }
+
 function folderMenuHtml(path) {
+    if (!canEdit) return '';
     const p = esc(path);
     return `<div class="dropdown folder-menu-btn">
         <button class="btn btn-icon-only dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Folder actions"><i class="bi bi-three-dots-vertical"></i></button>
@@ -122,7 +130,7 @@ function renderTree() {
         const hasKids = node.children.length > 0;
         const open = hasKids && openFolders.has(node.path);
         return `<li class="${hasKids && !open ? 'collapsed' : ''}">
-            <div class="tree-row${node.path === currentFolder ? ' active' : ''}" data-nav="${p}" data-drop-folder="${p}" data-drag-folder="${p}" draggable="true" title="${p}">
+            <div class="tree-row${node.path === currentFolder ? ' active' : ''}" data-nav="${p}" data-drop-folder="${p}"${folderDragAttrs(p)} title="${p}">
                 <button type="button" class="tree-toggle${open ? ' open' : ''}${hasKids ? '' : ' no-children'}" data-tree-toggle="${p}" tabindex="-1"><i class="bi bi-chevron-right"></i></button>
                 <i class="bi ${open ? 'bi-folder2-open' : 'bi-folder-fill'} text-primary"></i>
                 <span class="tree-label">${esc(node.name)}</span>
@@ -173,7 +181,7 @@ function folderCardHtml(node) {
     if (node.total || !node.children.length) info.push(`<span class="text-nowrap">${node.total ? plural(node.total, 'link') : 'Empty'}</span>`);
     return `<div class="col">
         <div class="card bg-body border-0 shadow-sm h-100 folder-card" style="cursor: pointer;"
-             data-nav="${p}" data-drop-folder="${p}" data-drag-folder="${p}" draggable="true">
+             data-nav="${p}" data-drop-folder="${p}"${folderDragAttrs(p)}>
             ${mosaicHtml(folderPreviews[node.path] || [])}
             <div class="card-caption d-flex align-items-center px-3 py-2">
                 <i class="bi bi-folder-fill fs-5 text-primary me-2"></i>
@@ -223,12 +231,17 @@ function bookmarkCardHtml(b, isSearch) {
         .map(t => `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle badge-soft me-1 mb-1">${esc(t)}</span>`).join('');
     const folderBadge = isSearch ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle badge-soft me-1 mb-1"><i class="bi bi-folder-fill me-1"></i>${esc(b.folderPath || 'Home')}</span>` : '';
     const checked = selectedIds.has(String(b.id)) ? ' checked' : '';
-    return `
-    <div class="col bookmark-card" draggable="true" data-drag-bookmark="${id}">
-        <div class="card h-100 shadow-sm border-0 position-relative bg-body" data-visit="${id}" title="Double-click to visit">
-            <div class="bulk-checkbox-container">
+    const checkbox = canEdit ? `<div class="bulk-checkbox-container">
                 <input class="form-check-input bulk-checkbox m-0 border-secondary" type="checkbox" value="${id}"${checked} style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
-            </div>
+            </div>` : '';
+    const editButtons = canEdit ? `
+                    <button class="btn btn-icon-only" data-bm-action="edit" data-id="${id}" title="Edit Details"><i class="bi bi-pencil"></i></button>
+                    <button class="btn btn-icon-only" data-bm-action="refresh" data-id="${id}" title="Refresh Image"><i class="bi bi-arrow-clockwise"></i></button>
+                    <button class="btn btn-icon-only hover-danger ms-1" data-bm-action="delete" data-id="${id}" title="Delete"><i class="bi bi-trash3"></i></button>` : '';
+    return `
+    <div class="col bookmark-card"${canEdit ? ' draggable="true"' : ''} data-drag-bookmark="${id}">
+        <div class="card h-100 shadow-sm border-0 position-relative bg-body" data-visit="${id}" title="Double-click to visit">
+            ${checkbox}
             ${previewHtml(b, id, domain)}
             <div class="card-body card-caption p-3 d-flex flex-column">
                 <div class="card-content">
@@ -237,10 +250,7 @@ function bookmarkCardHtml(b, isSearch) {
                 </div>
                 <div class="mt-auto action-buttons d-flex gap-1 align-items-center justify-content-end border-top pt-2">
                     <span class="text-muted small me-2"><i class="bi bi-eye"></i> <span id="views-${id}">${Number(b.views) || 0}</span></span>
-                    <button class="btn btn-icon-only hover-primary" data-bm-action="visit" data-id="${id}" title="Visit Link"><i class="bi bi-box-arrow-up-right"></i></button>
-                    <button class="btn btn-icon-only" data-bm-action="edit" data-id="${id}" title="Edit Details"><i class="bi bi-pencil"></i></button>
-                    <button class="btn btn-icon-only" data-bm-action="refresh" data-id="${id}" title="Refresh Image"><i class="bi bi-arrow-clockwise"></i></button>
-                    <button class="btn btn-icon-only hover-danger ms-1" data-bm-action="delete" data-id="${id}" title="Delete"><i class="bi bi-trash3"></i></button>
+                    <button class="btn btn-icon-only hover-primary" data-bm-action="visit" data-id="${id}" title="Visit Link"><i class="bi bi-box-arrow-up-right"></i></button>${editButtons}
                 </div>
             </div>
         </div>
@@ -278,7 +288,8 @@ function updateFilterDropdowns(categories) {
     document.getElementById('dynamicCategories').innerHTML = categories.map(c => `<option value="${esc(c)}">`).join('');
     const paths = folderList.map(f => f.path).sort(collator.compare);
     document.getElementById('dynamicFolders').innerHTML = paths.map(p => `<option value="${esc(p)}">`).join('');
-    document.getElementById('bulkFolder').innerHTML = '<option value="">Move to…</option>' + folderOptionsHtml();
+    const bulkFolder = document.getElementById('bulkFolder');
+    if (bulkFolder) bulkFolder.innerHTML = '<option value="">Move to…</option>' + folderOptionsHtml();
 }
 
 // --- Loading ---
@@ -403,7 +414,7 @@ function clearDragState() {
 }
 
 document.addEventListener('dragstart', e => {
-    const el = e.target.closest ? e.target.closest('[data-drag-bookmark], [data-drag-folder]') : null;
+    const el = canEdit && e.target.closest ? e.target.closest('[data-drag-bookmark], [data-drag-folder]') : null;
     if (!el) return;
     if (el.dataset.dragBookmark !== undefined) {
         const id = el.dataset.dragBookmark;
@@ -481,11 +492,11 @@ function openFolderModal(mode, path) {
     document.getElementById('newFolderName').value = rename ? baseName(path) : '';
     folderModal.show();
 }
-document.getElementById('newFolderModal').addEventListener('shown.bs.modal', () => {
+document.getElementById('newFolderModal')?.addEventListener('shown.bs.modal', () => {
     const input = document.getElementById('newFolderName'); input.focus(); input.select();
 });
 
-document.getElementById('folderForm').addEventListener('submit', async e => {
+document.getElementById('folderForm')?.addEventListener('submit', async e => {
     e.preventDefault();
     const name = document.getElementById('newFolderName').value.trim();
     if (!name) return;
@@ -515,7 +526,7 @@ function openMoveModal(path) {
     moveModal.show();
 }
 
-document.getElementById('moveFolderForm').addEventListener('submit', async e => {
+document.getElementById('moveFolderForm')?.addEventListener('submit', async e => {
     e.preventDefault();
     const target = document.getElementById('moveFolderTarget').value;
     moveModal.hide();
@@ -564,9 +575,11 @@ function handleBookmarkAction(action, id) {
 function trackAndVisit(id) {
     const b = findBookmark(id);
     if (!b || !/^https?:\/\//i.test(b.url)) return;
-    api('click', { id });
-    const viewSpan = document.getElementById(`views-${id}`);
-    if (viewSpan) viewSpan.innerText = (parseInt(viewSpan.innerText, 10) || 0) + 1;
+    if (canEdit) { // visits of read-only guests are not counted
+        api('click', { id });
+        const viewSpan = document.getElementById(`views-${id}`);
+        if (viewSpan) viewSpan.innerText = (parseInt(viewSpan.innerText, 10) || 0) + 1;
+    }
     window.open(b.url, '_blank', 'noopener,noreferrer'); // no Referer: the site must not learn where you came from
 }
 
@@ -597,7 +610,7 @@ function openAddModal() {
     addModal.show();
 }
 
-document.getElementById('addForm').addEventListener('submit', async e => {
+document.getElementById('addForm')?.addEventListener('submit', async e => {
     e.preventDefault(); addModal.hide(); toggleLoading(true);
     const data = await api('add', {
         url: document.getElementById('urlInput').value,
@@ -619,7 +632,7 @@ function openEdit(id) {
     editModal.show();
 }
 
-document.getElementById('editForm').addEventListener('submit', async e => {
+document.getElementById('editForm')?.addEventListener('submit', async e => {
     e.preventDefault(); editModal.hide(); toggleLoading(true);
     const data = await api('edit', {
         id: document.getElementById('edit_id').value,
@@ -633,7 +646,7 @@ document.getElementById('editForm').addEventListener('submit', async e => {
     loadBookmarks(true);
 });
 
-document.getElementById('importForm').addEventListener('submit', async e => {
+document.getElementById('importForm')?.addEventListener('submit', async e => {
     e.preventDefault(); toggleLoading(true);
     const fd = new FormData(); fd.append('importFile', document.getElementById('importFile').files[0]);
     let data;
@@ -652,6 +665,7 @@ document.getElementById('importForm').addEventListener('submit', async e => {
 // --- Bulk actions ---
 function updateBulkAction() {
     const bar = document.getElementById('bulkActionBar');
+    if (!bar) return;
     document.getElementById('bulkCount').innerText = `${selectedIds.size} selected`;
     bar.classList.toggle('active', selectedIds.size > 0);
 }

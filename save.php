@@ -12,6 +12,11 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     ");
 }
 
+if (sessionRole() !== 'admin') {
+    http_response_code(403);
+    die("<div style='font-family: sans-serif; text-align: center; padding: 20px;'><h3 style='color: #dc3545;'>❌ Read-only access</h3><p>This login can view bookmarks but not save them.</p></div>");
+}
+
 // The session cookie also travels with links from foreign pages. Only the
 // token from your own bookmarklet proves that you triggered the call.
 if (!hash_equals(bookmarkletToken($pdo), (string)($_GET['token'] ?? ''))) {

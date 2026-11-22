@@ -3,9 +3,11 @@ require_once 'functions.php';
 
 $login_error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
-    if (hash_equals($MASTER_PASSWORD, (string)$_POST['password'])) {
+    $role = loginRole((string)$_POST['password']);
+    if ($role) {
         session_regenerate_id(true);
         $_SESSION['logged_in'] = true;
+        $_SESSION['role'] = $role;
         header("Location: index.php");
         exit;
     } else {
@@ -15,10 +17,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
 if (isset($_GET['logout'])) { session_destroy(); header("Location: index.php"); exit; }
 
 $is_logged_in = isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true;
+$is_admin = sessionRole() === 'admin'; // read-only guests get no editing controls and no bookmarklet token
 sendPrivacyHeaders();
 
 $protocol = isHttps() ? "https" : "http";
-$bookmarkletToken = $is_logged_in ? bookmarkletToken($pdo) : '';
+$bookmarkletToken = $is_admin ? bookmarkletToken($pdo) : '';
 $baseUrl = $protocol . "://" . $_SERVER['HTTP_HOST'] . (dirname($_SERVER['PHP_SELF']) === '/' ? '' : dirname($_SERVER['PHP_SELF']));
 $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?token={$bookmarkletToken}&url='+encodeURIComponent(window.location.href)+'&title='+encodeURIComponent(document.title),'SaveBookmark','width=400,height=300,left='+(screen.width/2-200)+',top='+(screen.height/2-150));})();";
 ?>
@@ -159,7 +162,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         .folder-card .dropdown-toggle::after, #breadcrumbBar .dropdown-toggle::after { display: none; }
     </style>
 </head>
-<body>
+<body<?= $is_logged_in && !$is_admin ? ' class="read-only"' : '' ?>>
 
 <?php if (!$is_logged_in): ?>
 <div class="container d-flex align-items-center justify-content-center vh-100">
@@ -167,7 +170,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         <div class="text-center mb-4"><img src="bookmark.png" alt="Logo" style="width: 72px; height: 72px; object-fit: contain;" class="mb-3"><h3 class="fw-bold">Visual Bookmarks</h3></div>
         <?php if ($login_error): ?><div class="alert alert-danger shadow-sm py-2"><i class="bi bi-exclamation-circle me-2"></i><?= $login_error ?></div><?php endif; ?>
         <form method="POST" action="">
-            <div class="mb-4"><input type="password" name="password" class="form-control form-control-lg bg-body-tertiary" placeholder="Master Password" required autofocus></div>
+            <div class="mb-4"><input type="password" name="password" class="form-control form-control-lg bg-body-tertiary" placeholder="Password" required autofocus></div>
             <button type="submit" class="btn btn-primary btn-lg w-100 shadow-sm fw-bold"><i class="bi bi-unlock-fill me-2"></i> Log In</button>
         </form>
     </div>
@@ -179,6 +182,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
 <datalist id="dynamicFolders"></datalist>
 <datalist id="dynamicCategories"></datalist>
 
+<?php if ($is_admin): ?>
 <!-- Floating Bulk Action Bar -->
 <div id="bulkActionBar" class="card border-0 bg-dark text-white px-4 py-3 rounded-pill d-flex flex-row align-items-center gap-3">
     <span class="fw-bold text-nowrap" id="bulkCount">0 selected</span>
@@ -192,6 +196,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
     <button class="btn btn-secondary btn-sm fw-bold text-nowrap" onclick="executeBulk('retag')">Tag</button>
     <button class="btn btn-danger btn-sm fw-bold ms-2 text-nowrap" onclick="executeBulk('delete')"><i class="bi bi-trash3-fill"></i></button>
 </div>
+<?php endif; ?>
 
 <!-- Sticky Top Navbar -->
 <nav class="navbar navbar-expand-lg bg-body shadow-sm sticky-top border-bottom py-2">
@@ -211,13 +216,19 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         </div>
 
         <div class="d-flex align-items-center gap-2">
+            <?php if ($is_admin): ?>
             <button class="btn btn-outline-secondary btn-sm fw-bold rounded-pill px-3 shadow-sm d-none d-md-block" data-bs-toggle="modal" data-bs-target="#importModal">
                 <i class="bi bi-cloud-upload me-1"></i> Import
             </button>
+            <?php else: ?>
+            <span class="badge rounded-pill bg-secondary-subtle text-secondary border border-secondary-subtle d-none d-md-inline-block" title="You can browse and open links but not change anything"><i class="bi bi-eye me-1"></i>Read only</span>
+            <?php endif; ?>
             <div class="vr mx-1 d-none d-md-block"></div>
             <button id="layoutToggle" class="btn btn-icon-only" title="Toggle Grid/List"><i class="bi bi-list-task fs-5"></i></button>
             <button id="themeToggle" class="btn btn-icon-only" title="Toggle Theme"><i class="bi bi-moon-fill" id="themeIcon"></i></button>
+            <?php if ($is_admin): ?>
             <button class="btn btn-icon-only hover-primary" data-bs-toggle="modal" data-bs-target="#adminModal" title="Admin Scanner"><i class="bi bi-shield-check fs-5"></i></button>
+            <?php endif; ?>
             <a href="?logout=1" class="btn btn-icon-only hover-danger" title="Log Out"><i class="bi bi-box-arrow-right fs-5"></i></a>
         </div>
     </div>
@@ -237,7 +248,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
             <div class="card border-0 shadow-sm p-2 tree-card">
                 <div class="d-flex align-items-center justify-content-between px-2 pt-1 pb-2">
                     <span class="fw-bold text-muted small text-uppercase">Folders</span>
-                    <button class="btn btn-icon-only" data-folder-action="new" data-path="" title="New top-level folder"><i class="bi bi-folder-plus"></i></button>
+                    <?php if ($is_admin): ?><button class="btn btn-icon-only" data-folder-action="new" data-path="" title="New top-level folder"><i class="bi bi-folder-plus"></i></button><?php endif; ?>
                 </div>
                 <div id="folderTree"></div>
             </div>
@@ -254,6 +265,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
     <!-- Main Control Row (Add Button + Filters) -->
     <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
         
+        <?php if ($is_admin): ?>
         <div class="d-flex gap-2">
             <button class="btn btn-primary btn-lg fw-bold px-4 shadow-sm rounded-pill d-flex align-items-center justify-content-center" onclick="openAddModal()">
                 <i class="bi bi-plus-lg me-2"></i> Add Bookmark
@@ -262,8 +274,9 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
                 <i class="bi bi-folder-plus me-2"></i> New Folder
             </button>
         </div>
-        
-        <div class="d-flex gap-2 flex-wrap flex-md-nowrap flex-grow-1 justify-content-md-end" style="max-width: 500px;">
+        <?php endif; ?>
+
+        <div class="d-flex gap-2 flex-wrap flex-md-nowrap flex-grow-1 justify-content-md-end ms-md-auto" style="max-width: 500px;">
             <div class="input-group input-group-sm shadow-sm flex-grow-1">
                 <span class="input-group-text bg-body border-end-0 text-muted"><i class="bi bi-tag"></i></span>
                 <select id="filterCategory" class="form-select bg-body border-start-0 fw-medium shadow-none"><option value="All">All Tags</option></select>
@@ -292,6 +305,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
   </div>
 </div>
 
+<?php if ($is_admin): ?>
 <!-- Create Folder Modal -->
 <div class="modal fade" id="newFolderModal" tabindex="-1">
   <div class="modal-dialog">
@@ -419,6 +433,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
     </div>
   </div>
 </div>
+<?php endif; ?>
 
 <script src="vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script src="app.js?v=<?= filemtime(__DIR__ . '/app.js') ?>"></script>

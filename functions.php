@@ -10,7 +10,25 @@ function isHttps() {
 
 // --- SECURITY CONFIGURATION ---
 $MASTER_PASSWORD = 'admin'; // <-- CHANGE THIS TO YOUR SECURE PASSWORD
+$VIEW_PASSWORD = '';        // optional: password for read-only guests, empty = no guest access
 // ------------------------------
+
+// Role a password logs in as: 'admin' with the master password, 'viewer' with
+// the view password, null if it matches neither.
+function loginRole(string $password) {
+    global $MASTER_PASSWORD;
+    $view = (string)($GLOBALS['VIEW_PASSWORD'] ?? '');
+    if (hash_equals($MASTER_PASSWORD, $password)) return 'admin';
+    if ($view !== '' && hash_equals($view, $password)) return 'viewer';
+    return null;
+}
+
+// Role of the current session, null if not logged in. Sessions from before the
+// view password existed carry no role; only the master password could open them.
+function sessionRole() {
+    if (($_SESSION['logged_in'] ?? false) !== true) return null;
+    return ($_SESSION['role'] ?? 'admin') === 'viewer' ? 'viewer' : 'admin';
+}
 
 $screenshotDir = __DIR__ . '/screenshots/';
 $dbFile = __DIR__ . '/database.sqlite';
@@ -571,6 +589,19 @@ function faviconBytes($url) {
 // small, unknown sizes last.
 function iconRank($size) {
     return $size >= 96 ? $size : ($size > 0 ? 100000 - $size : 200000);
+}
+
+// Whether a saved link points to this host. Read-only guests only get icons of
+// such hosts, so they cannot make the server contact arbitrary sites.
+function isBookmarkedHost(PDO $pdo, $host) {
+    $host = strtolower(trim((string)$host));
+    if ($host === '' || !preg_match('~^[a-z0-9.-]+$~', $host)) return false; // also keeps LIKE wildcards out
+    $stmt = $pdo->prepare("SELECT url FROM bookmarks WHERE url LIKE ?");
+    $stmt->execute(['%' . $host . '%']);
+    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $url) {
+        if (strtolower((string)parse_url($url, PHP_URL_HOST)) === $host) return true;
+    }
+    return false;
 }
 
 // Favicon of a host, fetched once by the server and kept for 30 days; misses are
