@@ -64,6 +64,23 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         .list-view-active .preview-tile .tile-domain { display: none; }
         .list-view-active .preview-tile .tile-icon { width: 44px; height: 44px; padding: 6px; border-radius: 10px; }
         .list-view-active .preview-tile .tile-icon.small { padding: 6px; }
+        /* Folder cards: 2x2 mosaic of links inside (own corners, so the menu is not clipped) */
+        .folder-mosaic { display: grid; gap: 2px; height: 180px; border-top-left-radius: 11px; border-top-right-radius: 11px; overflow: hidden; background: var(--bs-body-bg); border-bottom: 1px solid var(--bs-border-color-translucent); }
+        .folder-mosaic.n1 { grid-template: 1fr / 1fr; }
+        .folder-mosaic.n2 { grid-template: 1fr / 1fr 1fr; }
+        .folder-mosaic.n3, .folder-mosaic.n4 { grid-template: 1fr 1fr / 1fr 1fr; }
+        .folder-mosaic.n3 > .cell:first-child { grid-row: span 2; }
+        .folder-mosaic .cell { min-width: 0; min-height: 0; overflow: hidden; }
+        .folder-mosaic .cell > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .folder-mosaic .preview-tile { height: 100%; gap: 0; }
+        .folder-mosaic .tile-domain { display: none; }
+        .folder-mosaic .tile-letter { font-size: 2rem; }
+        .folder-mosaic .tile-icon { width: 48px; height: 48px; padding: 7px; border-radius: 12px; }
+        .folder-mosaic .tile-icon.small { padding: 12px; }
+        .folder-mosaic.n1 .tile-icon, .folder-mosaic.n2 .tile-icon, .folder-mosaic.n3 > .cell:first-child .tile-icon { width: 64px; height: 64px; padding: 9px; border-radius: 16px; }
+        .folder-empty { display: grid; place-items: center; background: var(--bs-tertiary-bg); }
+        .folder-empty i { font-size: 3.5rem; color: var(--bs-primary); opacity: 0.85; }
+        @media (max-width: 575.98px) { .folder-mosaic { height: 150px; } }
         .bulk-checkbox-container { position: absolute; top: 12px; left: 12px; z-index: 10; background: var(--bs-body-bg); border-radius: 6px; padding: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; }
         
         /* Enhanced List View */

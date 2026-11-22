@@ -227,8 +227,16 @@ function plainText($html) {
     return trim(preg_replace('~\s+~u', ' ', $text) ?? $text);
 }
 
-// Preview image straight from YouTube for video links, null for anything else.
-function youtubeThumbnail($url) {
+// Preview images of a YouTube video, best first, [] for anything else.
+// maxresdefault (1280x720) and mqdefault (320x180) are 16:9 without the black
+// bars of hqdefault (480x360); maxresdefault is missing for some videos.
+function youtubeThumbnails($url) {
+    $id = youtubeId($url);
+    if ($id === null) return [];
+    return array_map(fn($v) => 'https://i.ytimg.com/vi/' . $id . '/' . $v . '.jpg', ['maxresdefault', 'mqdefault', 'hqdefault']);
+}
+
+function youtubeId($url) {
     $host = strtolower((string)parse_url($url, PHP_URL_HOST));
     $path = (string)parse_url($url, PHP_URL_PATH);
     $id = null;
@@ -239,7 +247,7 @@ function youtubeThumbnail($url) {
         $id = $query['v'] ?? null;
         if (!$id && preg_match('~^/(shorts|embed|live)/([^/]+)~', $path, $m)) $id = $m[2];
     }
-    return (is_string($id) && preg_match('~^[A-Za-z0-9_-]{11}$~', $id)) ? 'https://i.ytimg.com/vi/' . $id . '/hqdefault.jpg' : null;
+    return (is_string($id) && preg_match('~^[A-Za-z0-9_-]{11}$~', $id)) ? $id : null;
 }
 
 // ADD_DATE is in seconds; some exporters write milli- or microseconds.
@@ -478,8 +486,9 @@ function storeRemoteImage($url, $prefix, $timeout = 10) {
 // (og:image, twitter:image), else a thum.io screenshot. Returns [path, source];
 // path '' means none, the interface then draws a tile.
 function createPreview($url, $meta = null) {
-    $youtube = youtubeThumbnail($url);
-    if ($youtube && ($path = storeRemoteImage($youtube, 'yt'))) return [$path, 'youtube'];
+    foreach (youtubeThumbnails($url) as $thumb) {
+        if ($path = storeRemoteImage($thumb, 'yt')) return [$path, 'youtube'];
+    }
     $meta = $meta ?? fetchPageMeta($url);
     if ($meta['image'] && ($path = storeRemoteImage($meta['image'], 'og'))) return [$path, 'page'];
     // thum.io photographs error pages like any other page and answers 200, so
@@ -495,11 +504,60 @@ function createPreview($url, $meta = null) {
 function refreshPreview(PDO $pdo, array $bookmark, $meta = null) {
     [$path, $source] = createPreview($bookmark['url'], $meta);
     $old = (string)$bookmark['image'];
-    $oldIsLocal = $old !== '' && !preg_match('~^([a-z][a-z0-9+.-]*:|//)~i', $old);
+    $oldIsLocal = isLocalImagePath($old);
     if ($path === '' && $oldIsLocal) return [$old, 'kept'];
     if ($path !== '' || !$oldIsLocal) deleteScreenshot($old);
     $pdo->prepare("UPDATE bookmarks SET image = ? WHERE id = ?")->execute([$path, $bookmark['id']]);
     return [$path, $source];
+}
+
+// True for an image stored on this server (a relative path), false for remote
+// URLs from older versions and for no image.
+function isLocalImagePath($image) {
+    $image = (string)$image;
+    return $image !== '' && !preg_match('~^([a-z][a-z0-9+.-]*:|//)~i', $image);
+}
+
+// Links that represent each direct subfolder of $parent on its card, at most
+// $max per subfolder, keyed by stored folder path. They are taken in turn from
+// each branch below the subfolder (its own links and each of its subfolders
+// with everything inside), the branch with the newest link first. Within a
+// branch, links with a local preview image come first, then the newest.
+function folderPreviews(PDO $pdo, $parent, $max = 4) {
+    if ($parent === ROOT_FOLDER) {
+        $stmt = $pdo->query("SELECT url, image, folder FROM bookmarks WHERE folder IS NOT NULL AND folder NOT IN ('', 'Uncategorized') ORDER BY added_at DESC, id DESC");
+        $prefix = '';
+    } else {
+        $stmt = $pdo->prepare("SELECT url, image, folder FROM bookmarks WHERE substr(folder, 1, length(?) + 1) = ? || '/' ORDER BY added_at DESC, id DESC");
+        $stmt->execute([$parent, $parent]);
+        $prefix = $parent . '/';
+    }
+    $children = []; // subfolder => branch => links, branches in order of their newest link
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $rest = explode('/', substr($row['folder'], strlen($prefix)));
+        $branch = $rest[1] ?? '';
+        $children[$prefix . $rest[0]][$branch][] = ['url' => $row['url'], 'image' => isLocalImagePath($row['image']) ? $row['image'] : ''];
+    }
+    $previews = [];
+    foreach ($children as $child => $branches) {
+        foreach ($branches as &$links) {
+            usort($links, fn($a, $b) => ($b['image'] !== '') <=> ($a['image'] !== '')); // stable, keeps newest first
+        }
+        unset($links);
+        $picked = [];
+        for ($i = 0; count($picked) < $max; $i++) {
+            $found = false;
+            foreach ($branches as $links) {
+                if (!isset($links[$i])) continue;
+                $found = true;
+                $picked[] = $links[$i];
+                if (count($picked) === $max) break;
+            }
+            if (!$found) break;
+        }
+        $previews[(string)$child] = $picked;
+    }
+    return $previews;
 }
 
 function faviconBytes($url) {

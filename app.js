@@ -16,6 +16,7 @@ let currentFolder = '';      // raw path, '' = top level ("Home")
 let folderList = [];         // [{path, count}], count = bookmarks directly inside
 let folderTree = { root: { path: '', name: 'Home', count: 0, total: 0, children: [] }, nodes: new Map() };
 let rootCount = 0;
+let folderPreviews = {};     // raw subfolder path => [{url, image}], up to 4 links for its card
 let dragPayload = null;      // {type: 'bookmarks', ids} or {type: 'folder', path}
 
 const addModal = new bootstrap.Modal(document.getElementById('addModal'));
@@ -149,19 +150,37 @@ function renderBreadcrumb() {
     breadcrumbBar.innerHTML = `<div class="d-flex align-items-center gap-2 flex-wrap"><ol class="breadcrumb fs-5">${crumbs.join('')}</ol>${currentFolder === '' ? '' : folderMenuHtml(currentFolder)}</div>`;
 }
 
+// 2x2 mosaic of up to four links from the folder and its subfolders: their
+// local preview images, else the site icon tile. 1 link fills the area, 2 split
+// it, 3 give one large and two small cells. Empty folders keep the folder symbol.
+function mosaicHtml(items) {
+    if (!items.length) return '<div class="folder-mosaic folder-empty"><i class="bi bi-folder-fill"></i></div>';
+    const cells = items.slice(0, 4).map(it => {
+        if (isLocalImage(it.image)) return `<div class="cell"><img src="${esc(it.image)}" alt="" loading="lazy" draggable="false"></div>`;
+        let domain = '';
+        try { domain = new URL(it.url).hostname; } catch (e) {}
+        return `<div class="cell">${tileHtml(domain, '', 'mosaic-tile')}</div>`;
+    });
+    return `<div class="folder-mosaic n${cells.length}">${cells.join('')}</div>`;
+}
+
 function folderCardHtml(node) {
     const p = esc(node.path);
-    const info = [`<span class="text-nowrap">${plural(node.count, 'link')}</span>`];
+    const info = [];
     if (node.children.length) info.push(`<span class="text-nowrap">${plural(node.children.length, 'folder')}</span>`);
+    if (node.total || !node.children.length) info.push(`<span class="text-nowrap">${node.total ? plural(node.total, 'link') : 'Empty'}</span>`);
     return `<div class="col">
-        <div class="card bg-body border-0 shadow-sm h-100 p-3 d-flex flex-row align-items-center folder-card" style="cursor: pointer;"
+        <div class="card bg-body border-0 shadow-sm h-100 folder-card" style="cursor: pointer;"
              data-nav="${p}" data-drop-folder="${p}" data-drag-folder="${p}" draggable="true">
-            <i class="bi bi-folder-fill fs-2 text-primary me-3"></i>
-            <div style="min-width:0;" class="me-1">
-                <h6 class="fw-bold m-0 text-truncate" title="${esc(node.name)}">${esc(node.name)}</h6>
-                <small class="text-muted">${info.join(' · ')}</small>
+            ${mosaicHtml(folderPreviews[node.path] || [])}
+            <div class="d-flex align-items-center px-3 py-2">
+                <i class="bi bi-folder-fill fs-5 text-primary me-2"></i>
+                <div style="min-width:0;" class="me-1">
+                    <h6 class="fw-bold m-0 text-truncate" title="${esc(node.name)}">${esc(node.name)}</h6>
+                    <small class="text-muted">${info.join(' · ')}</small>
+                </div>
+                ${folderMenuHtml(node.path)}
             </div>
-            ${folderMenuHtml(node.path)}
         </div>
     </div>`;
 }
@@ -176,17 +195,21 @@ function iconUrl(domain) { return `icon.php?d=${encodeURIComponent(domain)}&v=2`
 
 // Tile without preview image: the site's icon, or the first letter if it has none.
 // Icons under 48 px are doubled pixel-sharp instead of being blurred up.
-function previewHtml(b, id, domain) {
-    if (isLocalImage(b.image)) {
-        return `<img src="${esc(b.image)}" id="img-${id}" class="card-img-top bg-body-tertiary" alt="" loading="lazy" draggable="false">`;
-    }
-    const name = (domain || b.title || '?').replace(/^www\./, '');
+function tileHtml(domain, fallbackName, cls, idAttr = '') {
+    const name = (domain || fallbackName || '?').replace(/^www\./, '');
     let hue = 0;
     for (const ch of name) hue = (hue * 31 + ch.codePointAt(0)) % 360;
     const icon = domain ? `<img class="tile-icon" src="${iconUrl(domain)}" alt="" loading="lazy" draggable="false"
         onload="if (this.naturalWidth < 48) this.classList.add('small')" onerror="this.remove()">` : '';
-    return `<div id="img-${id}" class="card-img-top preview-tile" style="--tile-hue: ${hue}">
+    return `<div ${idAttr} class="${cls} preview-tile" style="--tile-hue: ${hue}">
         ${icon}<span class="tile-letter">${esc([...name][0].toUpperCase())}</span><span class="tile-domain">${esc(name)}</span></div>`;
+}
+
+function previewHtml(b, id, domain) {
+    if (isLocalImage(b.image)) {
+        return `<img src="${esc(b.image)}" id="img-${id}" class="card-img-top bg-body-tertiary" alt="" loading="lazy" draggable="false">`;
+    }
+    return tileHtml(domain, b.title, 'card-img-top', `id="img-${id}"`);
 }
 
 function bookmarkCardHtml(b, isSearch) {
@@ -289,6 +312,8 @@ async function loadBookmarks(reset = false) {
         rootCount = Number(data.root_count) || 0;
         folderList = data.folders.map(f => ({ path: folderFromApi(f.name), count: Number(f.count) || 0 }));
         folderTree = buildTree(folderList);
+        folderPreviews = {};
+        Object.entries(data.folder_previews || {}).forEach(([path, items]) => { folderPreviews[folderFromApi(path)] = items; });
         if (currentFolder !== '' && !folderTree.nodes.has(currentFolder)) {
             isLoading = false;
             setCurrentFolder('', true);

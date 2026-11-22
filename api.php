@@ -92,8 +92,11 @@ if ($action === 'load') {
     $folderStmt = $pdo->query("SELECT f.name, COUNT(b.id) as count FROM folders f LEFT JOIN bookmarks b ON f.name = b.folder GROUP BY f.name ORDER BY f.name ASC");
     $folders = $folderStmt->fetchAll(PDO::FETCH_ASSOC);
     $rootCount = (int)$pdo->query("SELECT COUNT(*) FROM bookmarks WHERE folder = 'Uncategorized' OR folder = '' OR folder IS NULL")->fetchColumn();
+    // Mosaic of the subfolder cards, only needed when the folder view is rebuilt
+    $previews = ($offset === 0 && $search === '') ? folderPreviews($pdo, $folder) : [];
 
-    echo json_encode(['bookmarks' => $bookmarks, 'categories' => $uniqueTags, 'folders' => $folders, 'root_count' => $rootCount]);
+    echo json_encode(['bookmarks' => $bookmarks, 'categories' => $uniqueTags, 'folders' => $folders, 'root_count' => $rootCount,
+        'folder_previews' => (object)$previews]);
     exit;
 }
 
