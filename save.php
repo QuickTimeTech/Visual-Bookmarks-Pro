@@ -1,5 +1,6 @@
 <?php
 require_once 'functions.php';
+sendPrivacyHeaders();
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     die("
@@ -11,13 +12,25 @@ if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     ");
 }
 
+if (sessionRole() !== 'admin') {
+    http_response_code(403);
+    die("<div style='font-family: sans-serif; text-align: center; padding: 20px;'><h3 style='color: #dc3545;'>❌ Read-only access</h3><p>This login can view bookmarks but not save them.</p></div>");
+}
+
+// The session cookie also travels with links from foreign pages. Only the
+// token from your own bookmarklet proves that you triggered the call.
+if (!hash_equals(bookmarkletToken($pdo), (string)($_GET['token'] ?? ''))) {
+    http_response_code(403);
+    die("<div style='font-family: sans-serif; text-align: center; padding: 20px;'><h3 style='color: #dc3545;'>❌ Invalid token</h3><p>Please install the current bookmarklet from the admin dashboard.</p></div>");
+}
+
 $url = filter_var($_GET['url'] ?? '', FILTER_SANITIZE_URL);
-$category = ''; 
-$folder = 'Uncategorized';
+$category = '';
+$folder = ROOT_FOLDER;
 $status = 'saving';
 $message = '';
 
-if (filter_var($url, FILTER_VALIDATE_URL)) {
+if (isValidBookmarkUrl($url)) {
     $stmt = $pdo->prepare("SELECT id FROM bookmarks WHERE url = ?");
     $stmt->execute([$url]);
     
@@ -25,8 +38,10 @@ if (filter_var($url, FILTER_VALIDATE_URL)) {
         $status = 'warning';
         $message = 'Already in your bookmarks!';
     } else {
-        $imagePath = takeScreenshot($url);
-        $title = getWebpageTitle($url);
+        set_time_limit(90);
+        $meta = fetchPageMeta($url);
+        [$imagePath] = createPreview($url, $meta);
+        $title = htmlspecialchars($meta['title'] ?? (string)parse_url($url, PHP_URL_HOST));
         
         $stmt = $pdo->prepare("INSERT INTO bookmarks (title, url, image, category, folder) VALUES (?, ?, ?, ?, ?)");
         $stmt->execute([$title, $url, $imagePath, $category, $folder]);
@@ -44,8 +59,9 @@ if (filter_var($url, FILTER_VALIDATE_URL)) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="referrer" content="no-referrer">
     <title>Saving Bookmark...</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="d-flex align-items-center justify-content-center vh-100 bg-light text-center">
     <div>
