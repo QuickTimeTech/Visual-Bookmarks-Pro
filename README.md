@@ -2,6 +2,8 @@
 
 Visual Bookmarks Pro is a secure, self-hosted PHP/SQLite web application that transforms your saved web links into a visual, desktop-like workspace. It automatically captures webpage screenshots and titles, creating a beautiful and organized personal knowledge base.
 
+![Visual Bookmarks Pro with the folder tree on the left and folder cards showing previews of their links](preview.png)
+
 ## ✨ Features
 
 * **Automated Visuals:** Automatically scrapes webpage titles, retrieves site favicons, and generates visual screenshot previews using the Thum.io API.
