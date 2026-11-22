@@ -131,11 +131,13 @@ function renderTree() {
             ${hasKids ? `<ul class="tree">${node.children.map(rowHtml).join('')}</ul>` : ''}
         </li>`;
     };
+    // Home sits at the left edge, the top-level folders hang below it like any other subfolders
     const root = folderTree.root;
     const home = `<li><div class="tree-row${currentFolder === '' ? ' active' : ''}" data-nav="" data-drop-folder="">
-            <span class="tree-toggle no-children"></span><i class="bi bi-house-door-fill text-primary"></i>
-            <span class="tree-label">Home</span><span class="tree-count">${root.total || ''}</span></div></li>`;
-    treeContainer.innerHTML = `<ul class="tree">${home}${root.children.map(rowHtml).join('')}</ul>`;
+            <i class="bi bi-house-door-fill text-primary ms-1"></i>
+            <span class="tree-label">Home</span><span class="tree-count">${root.total || ''}</span></div>
+            ${root.children.length ? `<ul class="tree">${root.children.map(rowHtml).join('')}</ul>` : ''}</li>`;
+    treeContainer.innerHTML = `<ul class="tree">${home}</ul>`;
 }
 
 function renderBreadcrumb() {
