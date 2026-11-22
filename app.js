@@ -585,7 +585,14 @@ document.getElementById('importForm').addEventListener('submit', async e => {
     let data;
     try { const res = await fetch('api.php?action=import', { method: 'POST', body: fd }); data = await res.json(); } catch (err) { data = { success: false, error: 'Import failed.' }; }
     toggleLoading(false);
-    if (data.success) { importModal.hide(); showAlert(data.message || 'Imported.', 'success'); loadBookmarks(true); } else { showAlert(data.error, 'danger'); }
+    if (data.success) {
+        importModal.hide();
+        document.getElementById('importFile').value = '';
+        if (data.imported > 0 && data.folder) navToFolder(folderFromApi(data.folder)); else loadBookmarks(true);
+        showAlert(data.message || 'Imported.', 'success', 9000);
+    } else {
+        showAlert(data.error || 'Import failed.', 'danger');
+    }
 });
 
 // --- Bulk actions ---
@@ -661,12 +668,12 @@ document.getElementById('sortOrder').addEventListener('change', () => loadBookma
 function toggleLoading(show) { document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none'; }
 
 // Messages are plain text; showAlert escapes them.
-function showAlert(text, type) {
+function showAlert(text, type, duration = 3500) {
     const icon = { success: 'bi-check-circle-fill', danger: 'bi-exclamation-triangle-fill', warning: 'bi-exclamation-circle-fill' }[type] || 'bi-info-circle-fill';
     const box = document.getElementById('alertBox');
     box.innerHTML = `<div class="alert alert-${type} shadow-sm border-0"><i class="bi ${icon} me-2"></i>${esc(text)}</div>`;
     clearTimeout(showAlert.timer);
-    showAlert.timer = setTimeout(() => { box.innerHTML = ''; }, 3500);
+    showAlert.timer = setTimeout(() => { box.innerHTML = ''; }, duration);
 }
 
 // Infinite scroll

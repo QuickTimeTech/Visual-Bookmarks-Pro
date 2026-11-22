@@ -189,6 +189,105 @@ function deleteFolder(PDO $pdo, $path) {
     return ['bookmarks' => $delBookmarks->rowCount(), 'folders' => $delFolders->rowCount()];
 }
 
+// --- Import of browser bookmark files (Netscape bookmark format) ---
+const IMPORT_FOLDER = 'Imported';
+
+// Value of an attribute in the raw attribute string of a tag, entities decoded.
+function htmlAttribute($attrs, $attrName) {
+    if (preg_match('~\b' . preg_quote($attrName, '~') . '\s*=\s*(?:"([^"]*)"|\'([^\']*)\')~i', $attrs, $m)) {
+        return html_entity_decode(($m[1] ?? '') !== '' ? $m[1] : ($m[2] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+    return null;
+}
+
+// Tag content as plain text: tags removed, entities decoded, whitespace collapsed.
+function plainText($html) {
+    $text = html_entity_decode(strip_tags((string)$html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    return trim(preg_replace('~\s+~u', ' ', $text) ?? $text);
+}
+
+// Preview image straight from YouTube for video links, null for anything else.
+function youtubeThumbnail($url) {
+    $host = strtolower((string)parse_url($url, PHP_URL_HOST));
+    $path = (string)parse_url($url, PHP_URL_PATH);
+    $id = null;
+    if ($host === 'youtu.be') {
+        $id = ltrim($path, '/');
+    } elseif (preg_match('~(^|\.)youtube(-nocookie)?\.com$~', $host)) {
+        parse_str((string)parse_url($url, PHP_URL_QUERY), $query);
+        $id = $query['v'] ?? null;
+        if (!$id && preg_match('~^/(shorts|embed|live)/([^/]+)~', $path, $m)) $id = $m[2];
+    }
+    return (is_string($id) && preg_match('~^[A-Za-z0-9_-]{11}$~', $id)) ? 'https://i.ytimg.com/vi/' . $id . '/hqdefault.jpg' : null;
+}
+
+// ADD_DATE is in seconds; some exporters write milli- or microseconds.
+function importTimestamp($value) {
+    if ($value === null || !ctype_digit($value)) return null;
+    $ts = (int)$value;
+    while ($ts > 100000000000) $ts = intdiv($ts, 1000);
+    return $ts > 0 ? gmdate('Y-m-d H:i:s', $ts) : null;
+}
+
+// Imports a bookmark file exported by a browser. Its folders are recreated below
+// $baseFolder; the browser's own root folders (toolbar, "Other Bookmarks") add no
+// level. Links whose URL already exists are skipped.
+function importBookmarkHtml(PDO $pdo, $html, $baseFolder = IMPORT_FOLDER) {
+    // Tokens in document order: list start, list end, folder heading, link
+    $re = '~<dl\b[^>]*>|</dl\s*>|<h3\b([^>]*)>(.*?)</h3\s*>|<a\b([^>]*)>(.*?)</a\s*>~si';
+    preg_match_all($re, (string)$html, $tokens, PREG_SET_ORDER | PREG_UNMATCHED_AS_NULL);
+
+    $known = array_fill_keys($pdo->query("SELECT url FROM bookmarks")->fetchAll(PDO::FETCH_COLUMN), true);
+    $foldersBefore = (int)$pdo->query("SELECT COUNT(*) FROM folders")->fetchColumn();
+    $insert = $pdo->prepare("INSERT INTO bookmarks (title, url, image, category, folder, added_at) VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))");
+    $placeholder = 'https://placehold.co/1024x800/eeeeee/999999.jpg?text=Preview+Unavailable';
+    $stats = ['imported' => 0, 'duplicates' => 0, 'invalid' => 0, 'folders' => 0];
+    $stack = [];     // one entry per open list: escaped folder name, or '' for lists that add no level
+    $pending = '';   // folder heading waiting for its list
+    $pathOf = fn($stack) => implode('/', array_filter(array_merge([$baseFolder], $stack), 'strlen'));
+
+    $pdo->beginTransaction();
+    try {
+        ensureFolderPath($pdo, $baseFolder);
+        foreach ($tokens as $t) {
+            if ($t[1] !== null) {
+                // Folder heading
+                $isBrowserRoot = preg_match('~\b(PERSONAL_TOOLBAR_FOLDER|UNFILED_BOOKMARKS_FOLDER)\s*=\s*"?true~i', $t[1]);
+                $label = str_replace('/', '-', plainText($t[2]));
+                $pending = $isBrowserRoot ? '' : htmlspecialchars($label === '' ? 'Unnamed' : $label);
+            } elseif ($t[3] !== null) {
+                // Link
+                $url = trim((string)htmlAttribute($t[3], 'href'));
+                if (!isValidBookmarkUrl($url)) { $stats['invalid']++; continue; }
+                if (isset($known[$url])) { $stats['duplicates']++; continue; }
+                $known[$url] = true;
+                $title = plainText($t[4]);
+                if ($title === '') $title = (string)parse_url($url, PHP_URL_HOST);
+                $tags = implode(', ', array_filter(array_map('trim', explode(',', (string)htmlAttribute($t[3], 'tags'))), 'strlen'));
+                $insert->execute([
+                    htmlspecialchars($title), $url, youtubeThumbnail($url) ?? $placeholder,
+                    htmlspecialchars($tags), $pathOf($stack), importTimestamp(htmlAttribute($t[3], 'add_date')),
+                ]);
+                $stats['imported']++;
+            } elseif ($t[0][1] === '/') {
+                // End of a list
+                array_pop($stack);
+            } else {
+                // Start of a list: belongs to the heading before it; empty folders are created too
+                $stack[] = $pending;
+                $pending = '';
+                ensureFolderPath($pdo, $pathOf($stack));
+            }
+        }
+        $pdo->commit();
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        return ['error' => 'Import failed.'];
+    }
+    $stats['folders'] = (int)$pdo->query("SELECT COUNT(*) FROM folders")->fetchColumn() - $foldersBefore;
+    return $stats;
+}
+
 function takeScreenshot($url) {
     $apiUrl = "https://image.thum.io/get/width/1024/crop/800/" . $url;
     $imageData = @file_get_contents($apiUrl);

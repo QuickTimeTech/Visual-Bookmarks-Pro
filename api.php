@@ -197,24 +197,12 @@ if ($action === 'bulk' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if ($action === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_FILES['importFile']) && $_FILES['importFile']['error'] === UPLOAD_ERR_OK) {
-        $html = file_get_contents($_FILES['importFile']['tmp_name']);
-        preg_match_all('/<A HREF="([^"]+)".*?>(.*?)<\/A>/i', $html, $matches);
-        $imported = 0;
-        for ($i = 0; $i < count($matches[1]); $i++) {
-            $url = filter_var($matches[1][$i], FILTER_SANITIZE_URL);
-            $title = htmlspecialchars(trim($matches[2][$i]));
-            if (filter_var($url, FILTER_VALIDATE_URL)) {
-                $stmt = $pdo->prepare("SELECT id FROM bookmarks WHERE url = ?");
-                $stmt->execute([$url]);
-                if (!$stmt->fetch()) {
-                    $placeholder = "https://placehold.co/1024x800/eeeeee/999999.jpg?text=Preview+Unavailable";
-                    $pdo->prepare("INSERT INTO bookmarks (title, url, image, category, folder) VALUES (?, ?, ?, ?, ?)")
-                        ->execute([$title, $url, $placeholder, '', 'Imported']);
-                    $imported++;
-                }
-            }
-        }
-        echo json_encode(['success' => true, 'message' => "Imported $imported bookmarks successfully!"]);
+        // Folders of the file are recreated below "Imported"; existing URLs are skipped.
+        $r = importBookmarkHtml($pdo, file_get_contents($_FILES['importFile']['tmp_name']));
+        if (isset($r['error'])) { echo json_encode(['success' => false, 'error' => $r['error']]); exit; }
+        $message = sprintf('Imported %d bookmarks into "%s" (%d new folders). Skipped: %d already saved, %d without http(s) URL.',
+            $r['imported'], IMPORT_FOLDER, $r['folders'], $r['duplicates'], $r['invalid']);
+        echo json_encode(['success' => true, 'message' => $message, 'folder' => IMPORT_FOLDER] + $r);
         exit;
     }
     echo json_encode(['success' => false, 'error' => 'Failed to process file.']);

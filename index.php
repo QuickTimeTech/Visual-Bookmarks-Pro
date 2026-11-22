@@ -355,7 +355,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
     <div class="modal-content">
       <form id="importForm">
           <div class="modal-header bg-body-tertiary border-bottom-0"><h5 class="modal-title fw-bold"><i class="bi bi-cloud-upload text-primary me-2"></i>Import Bookmarks</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-          <div class="modal-body p-4"><p class="text-muted">Upload an HTML bookmark file exported from Chrome, Safari, Firefox, or Edge.</p><input type="file" id="importFile" class="form-control form-control-lg bg-body-tertiary border-0 shadow-none" accept=".html" required></div>
+          <div class="modal-body p-4"><p class="text-muted">Upload an HTML bookmark file exported from Chrome, Safari, Firefox, or Edge.</p><p class="text-muted small">Its folders are recreated inside the folder “Imported”. Links that are already saved are skipped.</p><input type="file" id="importFile" class="form-control form-control-lg bg-body-tertiary border-0 shadow-none" accept=".html" required></div>
           <div class="modal-footer bg-body-tertiary border-top-0"><button type="submit" class="btn btn-primary fw-bold w-100 shadow-sm">Import Now</button></div>
       </form>
     </div>
