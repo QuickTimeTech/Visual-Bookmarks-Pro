@@ -17,16 +17,18 @@ if ($action === 'admin_list') {
 
 if ($action === 'admin_process' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $id = $_POST['id'] ?? 0;
-    $stmt = $pdo->prepare("SELECT url, image FROM bookmarks WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, url, image FROM bookmarks WHERE id = ?");
     $stmt->execute([$id]);
     $bookmark = $stmt->fetch();
 
     if ($bookmark) {
-        $online = isWebsiteOnline($bookmark['url']);
-        deleteScreenshot($bookmark['image']);
-        $imgResult = takeScreenshotAdmin($bookmark['url']);
-        $pdo->prepare("UPDATE bookmarks SET image = ? WHERE id = ?")->execute([$imgResult['path'], $id]);
-        echo json_encode(['success' => true, 'online' => $online, 'has_image' => $imgResult['success']]);
+        session_write_close(); // slow request: do not block the rest of the app meanwhile
+        set_time_limit(90);
+        $meta = fetchPageMeta($bookmark['url']);
+        [$path, $source] = refreshPreview($pdo, $bookmark, $meta);
+        $host = parse_url($bookmark['url'], PHP_URL_HOST);
+        if ($host) cachedFavicon($pdo, $host);
+        echo json_encode(['success' => true, 'online' => $meta['online'], 'has_image' => $path !== '', 'source' => $source]);
         exit;
     }
     echo json_encode(['success' => false]);
@@ -154,9 +156,11 @@ if ($action === 'add' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$url]);
         if (!$stmt->fetch()) {
             ensureFolderPath($pdo, $folder);
-            $imagePath = takeScreenshot($url);
+            set_time_limit(90);
+            $meta = fetchPageMeta($url);
+            [$imagePath] = createPreview($url, $meta);
             // The page title comes from a foreign page: store it escaped like all other texts.
-            $title = htmlspecialchars(getWebpageTitle($url));
+            $title = htmlspecialchars($meta['title'] ?? (string)parse_url($url, PHP_URL_HOST));
             $pdo->prepare("INSERT INTO bookmarks (title, url, image, category, folder) VALUES (?, ?, ?, ?, ?)")
                 ->execute([$title, $url, $imagePath, $tags, $folder]);
             echo json_encode(['success' => true]);
@@ -200,7 +204,7 @@ if ($action === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         // Folders of the file are recreated below "Imported"; existing URLs are skipped.
         $r = importBookmarkHtml($pdo, file_get_contents($_FILES['importFile']['tmp_name']));
         if (isset($r['error'])) { echo json_encode(['success' => false, 'error' => $r['error']]); exit; }
-        $message = sprintf('Imported %d bookmarks into "%s" (%d new folders). Skipped: %d already saved, %d without http(s) URL.',
+        $message = sprintf('Imported %d bookmarks into "%s" (%d new folders). Skipped: %d already saved, %d without http(s) URL. Preview images: start the admin scanner.',
             $r['imported'], IMPORT_FOLDER, $r['folders'], $r['duplicates'], $r['invalid']);
         echo json_encode(['success' => true, 'message' => $message, 'folder' => IMPORT_FOLDER] + $r);
         exit;
@@ -211,15 +215,15 @@ if ($action === 'import' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if ($action === 'refresh' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $id = $_POST['id'] ?? 0;
-    $stmt = $pdo->prepare("SELECT url, image FROM bookmarks WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT id, url, image FROM bookmarks WHERE id = ?");
     $stmt->execute([$id]);
     $bookmark = $stmt->fetch();
 
     if ($bookmark) {
-        deleteScreenshot($bookmark['image']);
-        $newImage = takeScreenshot($bookmark['url']);
-        $pdo->prepare("UPDATE bookmarks SET image = ? WHERE id = ?")->execute([$newImage, $id]);
-        echo json_encode(['success' => true, 'newImage' => $newImage]);
+        session_write_close();
+        set_time_limit(90);
+        [$newImage, $source] = refreshPreview($pdo, $bookmark);
+        echo json_encode(['success' => true, 'newImage' => $newImage, 'source' => $source]);
         exit;
     }
     echo json_encode(['success' => false, 'error' => 'Bookmark not found.']);
@@ -243,7 +247,8 @@ if ($action === 'edit' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ensureFolderPath($pdo, $newFolder);
         $imagePath = $bookmark['image'];
         if ($bookmark['url'] !== $newUrl) {
-            $imagePath = takeScreenshot($newUrl);
+            set_time_limit(90);
+            [$imagePath] = createPreview($newUrl);
             deleteScreenshot($bookmark['image']);
         }
         $pdo->prepare("UPDATE bookmarks SET title = ?, url = ?, image = ?, category = ?, folder = ? WHERE id = ?")

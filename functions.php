@@ -19,6 +19,19 @@ if (!is_dir($screenshotDir)) {
     mkdir($screenshotDir, 0777, true);
 }
 
+// Favicons fetched by the server, see cachedFavicon()
+$iconDir = __DIR__ . '/icons/';
+if (!is_dir($iconDir)) {
+    mkdir($iconDir, 0755, true);
+}
+
+// The browser may only load from this server: no CDN, no favicon or image
+// services that would learn your IP address and your bookmarks.
+function sendPrivacyHeaders() {
+    header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        . "img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'");
+}
+
 $pdo = new PDO('sqlite:' . $dbFile);
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
@@ -48,15 +61,22 @@ $pdo->exec("INSERT OR IGNORE INTO folders (name) SELECT DISTINCT folder FROM boo
 
 $pdo->exec("CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT)");
 
+// Random secret per installation, created on first use and kept in settings.
+function appSecret(PDO $pdo, $key) {
+    $stmt = $pdo->prepare("SELECT value FROM settings WHERE name = ?");
+    $stmt->execute([$key]);
+    $secret = $stmt->fetchColumn();
+    if (!$secret) {
+        $secret = bin2hex(random_bytes(16));
+        $pdo->prepare("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)")->execute([$key, $secret]);
+    }
+    return $secret;
+}
+
 // Secret part of the bookmarklet URL, so that save.php only stores links sent
 // by your own bookmarklet and not by any page that opens save.php.
 function bookmarkletToken(PDO $pdo) {
-    $token = $pdo->query("SELECT value FROM settings WHERE name = 'bookmarklet_token'")->fetchColumn();
-    if (!$token) {
-        $token = bin2hex(random_bytes(16));
-        $pdo->prepare("INSERT OR REPLACE INTO settings (name, value) VALUES ('bookmarklet_token', ?)")->execute([$token]);
-    }
-    return $token;
+    return appSecret($pdo, 'bookmarklet_token');
 }
 
 // Only http and https: FILTER_VALIDATE_URL alone also accepts javascript: URLs.
@@ -194,8 +214,9 @@ const IMPORT_FOLDER = 'Imported';
 
 // Value of an attribute in the raw attribute string of a tag, entities decoded.
 function htmlAttribute($attrs, $attrName) {
-    if (preg_match('~\b' . preg_quote($attrName, '~') . '\s*=\s*(?:"([^"]*)"|\'([^\']*)\')~i', $attrs, $m)) {
-        return html_entity_decode(($m[1] ?? '') !== '' ? $m[1] : ($m[2] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $re = '~(?<![\w-])' . preg_quote($attrName, '~') . '\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s"\'>]+))~i';
+    if (preg_match($re, $attrs, $m, PREG_UNMATCHED_AS_NULL)) {
+        return html_entity_decode($m[1] ?? $m[2] ?? $m[3] ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
     }
     return null;
 }
@@ -240,7 +261,6 @@ function importBookmarkHtml(PDO $pdo, $html, $baseFolder = IMPORT_FOLDER) {
     $known = array_fill_keys($pdo->query("SELECT url FROM bookmarks")->fetchAll(PDO::FETCH_COLUMN), true);
     $foldersBefore = (int)$pdo->query("SELECT COUNT(*) FROM folders")->fetchColumn();
     $insert = $pdo->prepare("INSERT INTO bookmarks (title, url, image, category, folder, added_at) VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))");
-    $placeholder = 'https://placehold.co/1024x800/eeeeee/999999.jpg?text=Preview+Unavailable';
     $stats = ['imported' => 0, 'duplicates' => 0, 'invalid' => 0, 'folders' => 0];
     $stack = [];     // one entry per open list: escaped folder name, or '' for lists that add no level
     $pending = '';   // folder heading waiting for its list
@@ -265,7 +285,7 @@ function importBookmarkHtml(PDO $pdo, $html, $baseFolder = IMPORT_FOLDER) {
                 if ($title === '') $title = (string)parse_url($url, PHP_URL_HOST);
                 $tags = implode(', ', array_filter(array_map('trim', explode(',', (string)htmlAttribute($t[3], 'tags'))), 'strlen'));
                 $insert->execute([
-                    htmlspecialchars($title), $url, youtubeThumbnail($url) ?? $placeholder,
+                    htmlspecialchars($title), $url, '', // no network during import; the admin scanner loads previews
                     htmlspecialchars($tags), $pathOf($stack), importTimestamp(htmlAttribute($t[3], 'add_date')),
                 ]);
                 $stats['imported']++;
@@ -288,60 +308,201 @@ function importBookmarkHtml(PDO $pdo, $html, $baseFolder = IMPORT_FOLDER) {
     return $stats;
 }
 
-function takeScreenshot($url) {
-    $apiUrl = "https://image.thum.io/get/width/1024/crop/800/" . $url;
-    $imageData = @file_get_contents($apiUrl);
-    $filename = md5($url . time()) . '.jpg';
-    $filepath = 'screenshots/' . $filename;
+// --- Fetching from other servers ---
+// Only the server talks to other sites. It fetches titles, preview images and
+// favicons once and stores them, so the browser never loads anything foreign.
+const FETCH_USER_AGENT = 'Mozilla/5.0 (compatible; VisualBookmarks/1.0)';
 
-    if ($imageData) {
-        file_put_contents(__DIR__ . '/' . $filepath, $imageData);
+// Addresses of a host, or [] if any of them is not a public internet address.
+// Keeps requests out of the server's own networks (containers, VPN, localhost).
+function publicAddressesOf($host) {
+    $host = trim((string)$host, '[]');
+    if (filter_var($host, FILTER_VALIDATE_IP)) {
+        $ips = [$host];
     } else {
-        $fallbackUrl = "https://placehold.co/1024x800/eeeeee/999999.jpg?text=Preview+Unavailable";
-        $fallbackData = @file_get_contents($fallbackUrl);
-        file_put_contents(__DIR__ . '/' . $filepath, $fallbackData);
+        $ips = gethostbynamel($host) ?: [];
+        foreach (@dns_get_record($host, DNS_AAAA) ?: [] as $record) {
+            if (!empty($record['ipv6'])) $ips[] = $record['ipv6'];
+        }
     }
-    return $filepath;
+    foreach ($ips as $ip) {
+        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE)) return [];
+    }
+    return $ips;
 }
 
-function takeScreenshotAdmin($url) {
-    $apiUrl = "https://image.thum.io/get/width/1024/crop/800/" . $url;
-    $imageData = @file_get_contents($apiUrl);
-    $filename = md5($url . time()) . '.jpg';
-    $filepath = 'screenshots/' . $filename;
-    
-    if ($imageData) {
-        file_put_contents(__DIR__ . '/' . $filepath, $imageData);
-        return ['path' => $filepath, 'success' => true];
-    } else {
-        $fallbackUrl = "https://placehold.co/1024x800/eeeeee/999999.jpg?text=Preview+Unavailable";
-        $fallbackData = @file_get_contents($fallbackUrl);
-        file_put_contents(__DIR__ . '/' . $filepath, $fallbackData);
-        return ['path' => $filepath, 'success' => false];
-    }
-}
-
-function isWebsiteOnline($url) {
-    if (function_exists('curl_init')) {
+// GET request with size and time limits. Redirects are followed by hand so that
+// every hop is checked and the connection is pinned to the checked address.
+// Returns ['body', 'type', 'url', 'status'] or null.
+function fetchRemote($url, $maxBytes = 2000000, $timeout = 8) {
+    for ($hop = 0; $hop < 5; $hop++) {
+        $parts = parse_url($url);
+        $scheme = strtolower($parts['scheme'] ?? '');
+        $host = trim($parts['host'] ?? '', '[]');
+        if (!in_array($scheme, ['http', 'https'], true) || $host === '') return null;
+        $ips = publicAddressesOf($host);
+        if (!$ips) return null;
+        $port = $parts['port'] ?? ($scheme === 'https' ? 443 : 80);
+        $ip = str_contains($ips[0], ':') ? '[' . $ips[0] . ']' : $ips[0];
+        $body = '';
         $ch = curl_init($url);
-        curl_setopt($ch, CURLOPT_NOBODY, true);
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0');
-        curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        return ($code >= 200 && $code < 400);
+        curl_setopt_array($ch, [
+            CURLOPT_RESOLVE => [$host . ':' . $port . ':' . $ip],
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS,
+            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_TIMEOUT => $timeout,
+            CURLOPT_USERAGENT => FETCH_USER_AGENT,
+            CURLOPT_HTTPHEADER => ['Accept-Language: en,de;q=0.8'],
+            CURLOPT_ENCODING => '',
+            CURLOPT_WRITEFUNCTION => function ($ch, $chunk) use (&$body, $maxBytes) {
+                $body .= $chunk;
+                return strlen($body) > $maxBytes ? 0 : strlen($chunk); // 0 aborts the transfer
+            },
+        ]);
+        $ok = curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $type = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $location = (string)curl_getinfo($ch, CURLINFO_REDIRECT_URL);
+        if ($ok === false) return null;
+        if ($status >= 300 && $status < 400 && $location !== '') { $url = $location; continue; }
+        return ['body' => $body, 'type' => $type, 'url' => $url, 'status' => $status];
     }
-    return false;
+    return null;
 }
 
-function getWebpageTitle($url) {
-    $context = stream_context_create(['http' => ['timeout' => 4, 'user_agent' => 'Mozilla/5.0']]);
-    $html = @file_get_contents($url, false, $context);
-    
-    if ($html && preg_match('/<title[^>]*>(.*?)<\/title>/is', $html, $matches)) {
-        return trim(html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8'));
-    }
-    return parse_url($url, PHP_URL_HOST);
+function absoluteUrl($ref, $base) {
+    $ref = trim((string)$ref);
+    if (preg_match('~^[a-z][a-z0-9+.-]*:~i', $ref)) return $ref;
+    $b = parse_url($base);
+    $scheme = $b['scheme'] ?? 'https';
+    if (str_starts_with($ref, '//')) return $scheme . ':' . $ref;
+    $origin = $scheme . '://' . ($b['host'] ?? '') . (isset($b['port']) ? ':' . $b['port'] : '');
+    if (str_starts_with($ref, '/')) return $origin . $ref;
+    return $origin . preg_replace('~[^/]*$~', '', $b['path'] ?? '/') . $ref;
 }
+
+// <meta> values of a page by property or name; the first occurrence wins.
+function pageMetaTags($html) {
+    $tags = [];
+    if (preg_match_all('~<meta\b[^>]*>~i', $html, $m)) {
+        foreach ($m[0] as $tag) {
+            $key = strtolower(trim((string)(htmlAttribute($tag, 'property') ?? htmlAttribute($tag, 'name'))));
+            $content = trim((string)htmlAttribute($tag, 'content'));
+            if ($key !== '' && $content !== '' && !isset($tags[$key])) $tags[$key] = $content;
+        }
+    }
+    return $tags;
+}
+
+// Title, preview image and icon candidates of a page. 'online' is false when the
+// page could not be fetched or answered with an error status; 'status' is 0
+// when there was no answer at all.
+function fetchPageMeta($url) {
+    $meta = ['online' => false, 'status' => 0, 'title' => null, 'image' => null, 'icons' => []];
+    $r = fetchRemote($url, 2000000, 8);
+    if (!$r) return $meta;
+    $meta['status'] = $r['status'];
+    if ($r['status'] >= 400) return $meta;
+    $meta['online'] = true;
+    if (stripos($r['type'], 'html') === false) return $meta;
+    $html = $r['body'];
+    if (preg_match('~<title[^>]*>(.*?)</title\s*>~si', $html, $m)) $meta['title'] = plainText($m[1]) ?: null;
+    $tags = pageMetaTags($html);
+    foreach (['og:image:secure_url', 'og:image:url', 'og:image', 'twitter:image', 'twitter:image:src'] as $key) {
+        if (!empty($tags[$key])) { $meta['image'] = absoluteUrl($tags[$key], $r['url']); break; }
+    }
+    if (preg_match_all('~<link\b[^>]*>~i', $html, $links)) {
+        foreach ($links[0] as $tag) {
+            $rel = ' ' . strtolower((string)htmlAttribute($tag, 'rel')) . ' ';
+            $href = htmlAttribute($tag, 'href');
+            if ($href && (str_contains($rel, ' icon ') || str_contains($rel, ' apple-touch-icon '))) {
+                $meta['icons'][] = absoluteUrl($href, $r['url']);
+            }
+        }
+    }
+    return $meta;
+}
+
+// File extension for raster images, null for anything else. SVG is refused on
+// purpose: opened directly from this site it could run scripts.
+function imageExtension($bytes) {
+    $type = (new finfo(FILEINFO_MIME_TYPE))->buffer($bytes);
+    return [
+        'image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp',
+        'image/avif' => 'avif', 'image/x-icon' => 'ico', 'image/vnd.microsoft.icon' => 'ico',
+    ][$type] ?? null;
+}
+
+// Downloads an image into the screenshot folder; returns the relative path or null.
+function storeRemoteImage($url, $prefix, $timeout = 10) {
+    global $screenshotDir;
+    $r = fetchRemote($url, 5000000, $timeout);
+    if (!$r || $r['status'] < 200 || $r['status'] >= 300 || $r['body'] === '') return null;
+    $ext = imageExtension($r['body']);
+    if ($ext === null) return null;
+    $name = $prefix . '-' . md5($url . random_bytes(8)) . '.' . $ext;
+    if (file_put_contents($screenshotDir . $name, $r['body']) === false) return null;
+    return basename(rtrim($screenshotDir, '/')) . '/' . $name;
+}
+
+// Preview image of a link: the YouTube thumbnail, else the page's own preview
+// (og:image, twitter:image), else a thum.io screenshot. Returns [path, source];
+// path '' means none, the interface then draws a tile.
+function createPreview($url, $meta = null) {
+    $youtube = youtubeThumbnail($url);
+    if ($youtube && ($path = storeRemoteImage($youtube, 'yt'))) return [$path, 'youtube'];
+    $meta = $meta ?? fetchPageMeta($url);
+    if ($meta['image'] && ($path = storeRemoteImage($meta['image'], 'og'))) return [$path, 'page'];
+    // thum.io photographs error pages like any other page and answers 200, so
+    // only pages that answer get a screenshot. 403 and 429 are often bot filters
+    // that a real browser passes.
+    if ($meta['status'] === 0 || ($meta['status'] >= 400 && !in_array($meta['status'], [403, 429], true))) return ['', 'none'];
+    $shot = storeRemoteImage('https://image.thum.io/get/noanimate/width/1024/crop/800/' . $url, 'shot', 25);
+    return $shot ? [$shot, 'thum.io'] : ['', 'none'];
+}
+
+// Replaces the preview of a bookmark. A failed attempt keeps a local image that
+// already exists, but never a remote URL (those would be loaded by the browser).
+function refreshPreview(PDO $pdo, array $bookmark, $meta = null) {
+    [$path, $source] = createPreview($bookmark['url'], $meta);
+    $old = (string)$bookmark['image'];
+    $oldIsLocal = $old !== '' && !preg_match('~^([a-z][a-z0-9+.-]*:|//)~i', $old);
+    if ($path === '' && $oldIsLocal) return [$old, 'kept'];
+    if ($path !== '' || !$oldIsLocal) deleteScreenshot($old);
+    $pdo->prepare("UPDATE bookmarks SET image = ? WHERE id = ?")->execute([$path, $bookmark['id']]);
+    return [$path, $source];
+}
+
+function faviconBytes($url) {
+    $r = fetchRemote($url, 500000, 5);
+    $ok = $r && $r['status'] >= 200 && $r['status'] < 300 && $r['body'] !== '' && imageExtension($r['body']);
+    return $ok ? $r['body'] : null;
+}
+
+// Favicon of a host, fetched once by the server and kept for 30 days; misses are
+// remembered for 3 days. File names are keyed hashes, so nobody can probe the
+// folder for the domains you saved. Returns the file path or null.
+function cachedFavicon(PDO $pdo, $host) {
+    global $iconDir;
+    $host = strtolower(trim((string)$host));
+    if ($host === '' || strlen($host) > 253 || !preg_match('~^[a-z0-9.-]+$~', $host)) return null;
+    $base = $iconDir . hash_hmac('sha256', $host, appSecret($pdo, 'icon_key'));
+    foreach (glob($base . '.*') ?: [] as $file) {
+        $miss = str_ends_with($file, '.none');
+        if (filemtime($file) > time() - ($miss ? 3 : 30) * 86400) return $miss ? null : $file;
+        @unlink($file);
+    }
+    $bytes = faviconBytes('https://' . $host . '/favicon.ico');
+    if ($bytes === null) {
+        foreach (array_slice(fetchPageMeta('https://' . $host . '/')['icons'], 0, 3) as $iconUrl) {
+            if (($bytes = faviconBytes($iconUrl)) !== null) break;
+        }
+    }
+    if ($bytes === null) { touch($base . '.none'); return null; }
+    $file = $base . '.' . imageExtension($bytes);
+    file_put_contents($file, $bytes);
+    return $file;
+}
+
 ?>

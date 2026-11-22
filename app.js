@@ -166,11 +166,26 @@ function folderCardHtml(node) {
     </div>`;
 }
 
+// Only images stored on this server are shown. Anything else (old remote URLs,
+// no image at all) becomes a drawn tile, so the browser never contacts another site.
+function isLocalImage(src) { return !!src && !/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(src); }
+
+function previewHtml(b, id, domain) {
+    if (isLocalImage(b.image)) {
+        return `<img src="${esc(b.image)}" id="img-${id}" class="card-img-top bg-body-tertiary" alt="" loading="lazy" draggable="false">`;
+    }
+    const name = (domain || b.title || '?').replace(/^www\./, '');
+    let hue = 0;
+    for (const ch of name) hue = (hue * 31 + ch.codePointAt(0)) % 360;
+    return `<div id="img-${id}" class="card-img-top preview-tile" style="--tile-hue: ${hue}">
+        <span class="tile-letter">${esc([...name][0].toUpperCase())}</span><span class="tile-domain">${esc(name)}</span></div>`;
+}
+
 function bookmarkCardHtml(b, isSearch) {
     const id = esc(b.id);
     let domain = '';
     try { domain = new URL(b.url).hostname; } catch (e) {}
-    const favicon = domain ? `<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32" onerror="this.style.display='none'" class="me-2 rounded bg-light" style="width: 16px; height: 16px;" draggable="false">` : '';
+    const favicon = domain ? `<img src="icon.php?d=${encodeURIComponent(domain)}" onerror="this.style.display='none'" class="me-2 rounded" style="width: 16px; height: 16px;" alt="" loading="lazy" draggable="false">` : '';
     const tags = b.category.split(',').map(t => t.trim()).filter(Boolean)
         .map(t => `<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle badge-soft me-1 mb-1">${esc(t)}</span>`).join('');
     const folderBadge = isSearch ? `<span class="badge bg-primary-subtle text-primary border border-primary-subtle badge-soft me-1 mb-1"><i class="bi bi-folder-fill me-1"></i>${esc(b.folderPath || 'Home')}</span>` : '';
@@ -181,7 +196,7 @@ function bookmarkCardHtml(b, isSearch) {
             <div class="bulk-checkbox-container">
                 <input class="form-check-input bulk-checkbox m-0 border-secondary" type="checkbox" value="${id}"${checked} style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
             </div>
-            <img src="${esc(b.image)}" id="img-${id}" class="card-img-top bg-body-tertiary" alt="Screenshot" loading="lazy" draggable="false">
+            ${previewHtml(b, id, domain)}
             <div class="card-body p-3 d-flex flex-column">
                 <div class="card-content">
                     <h5 class="card-title mb-1" title="${esc(b.title)}">${favicon}${esc(b.title)}</h5>
@@ -517,17 +532,21 @@ function trackAndVisit(id) {
     api('click', { id });
     const viewSpan = document.getElementById(`views-${id}`);
     if (viewSpan) viewSpan.innerText = (parseInt(viewSpan.innerText, 10) || 0) + 1;
-    window.open(b.url, '_blank', 'noopener');
+    window.open(b.url, '_blank', 'noopener,noreferrer'); // no Referer: the site must not learn where you came from
 }
 
 async function refreshImage(id) {
-    const imgEl = document.getElementById(`img-${id}`);
-    if (imgEl) imgEl.style.opacity = '0.3';
+    const preview = document.getElementById(`img-${id}`);
+    if (preview) preview.style.opacity = '0.3';
     const data = await api('refresh', { id });
-    if (imgEl) {
-        if (data.success) imgEl.src = data.newImage + '?t=' + Date.now();
-        imgEl.style.opacity = '1';
+    const b = findBookmark(id);
+    if (data.success && b) {
+        b.image = data.newImage;
+        const card = document.querySelector(`.bookmark-card[data-drag-bookmark="${CSS.escape(String(id))}"]`);
+        if (card) { card.outerHTML = bookmarkCardHtml(b, document.getElementById('searchInput').value.trim() !== ''); return; }
     }
+    if (preview) preview.style.opacity = '1';
+    if (!data.success) showAlert(data.error || 'Could not refresh the image.', 'danger');
 }
 
 async function deleteBookmark(id) {
@@ -632,7 +651,7 @@ async function startAdminScan() {
             const pData = await api('admin_process', { id: b.id });
             if (pData.success) {
                 if (pData.online) { stats.online++; log.innerHTML += '<span class="text-success">ONLINE</span> | '; } else { stats.offline++; offlineIds.push(b.id); log.innerHTML += '<span class="text-danger">OFFLINE</span> | '; }
-                if (pData.has_image) { stats.image++; log.innerHTML += '<span class="text-primary">IMG OK</span><br>'; } else { stats.noimage++; log.innerHTML += '<span class="text-warning">NO IMG</span><br>'; }
+                if (pData.has_image) { stats.image++; log.innerHTML += `<span class="text-primary">IMG ${esc(pData.source || 'OK')}</span><br>`; } else { stats.noimage++; log.innerHTML += '<span class="text-warning">NO IMG (tile)</span><br>'; }
             } else { log.innerHTML += '<span class="text-danger">ERROR</span><br>'; }
             setStat('Online', stats.online); setStat('Offline', stats.offline); setStat('Image', stats.image); setStat('NoImage', stats.noimage);
             const pct = Math.round(((i + 1) / stats.total) * 100); prog.style.width = pct + '%'; prog.innerText = pct + '%';

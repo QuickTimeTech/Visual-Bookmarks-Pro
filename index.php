@@ -15,6 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
 if (isset($_GET['logout'])) { session_destroy(); header("Location: index.php"); exit; }
 
 $is_logged_in = isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true;
+sendPrivacyHeaders();
 
 $protocol = isHttps() ? "https" : "http";
 $bookmarkletToken = $is_logged_in ? bookmarkletToken($pdo) : '';
@@ -25,11 +26,14 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
 <html lang="en" data-bs-theme="light">
 <head>
     <meta charset="UTF-8">
+    <!-- No Referer to any site: visited pages must not learn where you came from -->
+    <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Visual Bookmarks Pro</title>
     <link rel="icon" type="image/png" href="bookmark.png">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Served locally (Bootstrap 5.3.0, Bootstrap Icons 1.11.1, MIT) instead of a CDN -->
+    <link href="vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link href="vendor/bootstrap-icons/bootstrap-icons.min.css" rel="stylesheet">
     <style>
         body { background-color: var(--bs-body-bg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         .card { transition: transform 0.1s ease, box-shadow 0.2s ease; border-radius: 12px; border: 1px solid var(--bs-border-color-translucent); }
@@ -47,6 +51,14 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         .bookmark-card .card:hover { border-color: var(--bs-primary-border-subtle); box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important; }
         
         .card-img-top { height: 180px; object-fit: cover; object-position: top; border-top-left-radius: 11px; border-top-right-radius: 11px; border-bottom: 1px solid var(--bs-border-color-translucent); }
+        /* Drawn tile for links without a local preview image */
+        .preview-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; overflow: hidden;
+            background: linear-gradient(135deg, hsl(var(--tile-hue) 55% 90%), hsl(calc(var(--tile-hue) + 40) 55% 82%)); color: hsl(var(--tile-hue) 45% 28%); }
+        [data-bs-theme="dark"] .preview-tile { background: linear-gradient(135deg, hsl(var(--tile-hue) 35% 24%), hsl(calc(var(--tile-hue) + 40) 35% 17%)); color: hsl(var(--tile-hue) 60% 82%); }
+        .preview-tile .tile-letter { font-size: 3.5rem; font-weight: 700; line-height: 1; }
+        .preview-tile .tile-domain { font-size: 0.85rem; opacity: 0.8; max-width: 90%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .list-view-active .preview-tile .tile-letter { font-size: 1.75rem; }
+        .list-view-active .preview-tile .tile-domain { display: none; }
         .bulk-checkbox-container { position: absolute; top: 12px; left: 12px; z-index: 10; background: var(--bs-body-bg); border-radius: 6px; padding: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; }
         
         /* Enhanced List View */
@@ -362,7 +374,7 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script src="app.js?v=<?= filemtime(__DIR__ . '/app.js') ?>"></script>
 <?php endif; ?>
 

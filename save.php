@@ -1,5 +1,6 @@
 <?php
 require_once 'functions.php';
+sendPrivacyHeaders();
 
 if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     die("
@@ -32,8 +33,10 @@ if (isValidBookmarkUrl($url)) {
         $status = 'warning';
         $message = 'Already in your bookmarks!';
     } else {
-        $imagePath = takeScreenshot($url);
-        $title = htmlspecialchars(getWebpageTitle($url));
+        set_time_limit(90);
+        $meta = fetchPageMeta($url);
+        [$imagePath] = createPreview($url, $meta);
+        $title = htmlspecialchars($meta['title'] ?? (string)parse_url($url, PHP_URL_HOST));
         
         $stmt = $pdo->prepare("INSERT INTO bookmarks (title, url, image, category, folder) VALUES (?, ?, ?, ?, ?)");
         $stmt->execute([$title, $url, $imagePath, $category, $folder]);
@@ -51,8 +54,9 @@ if (isValidBookmarkUrl($url)) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="referrer" content="no-referrer">
     <title>Saving Bookmark...</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="d-flex align-items-center justify-content-center vh-100 bg-light text-center">
     <div>
