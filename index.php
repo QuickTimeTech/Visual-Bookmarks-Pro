@@ -81,6 +81,16 @@ $bookmarkletCode = "javascript:(function(){window.open('{$baseUrl}/save.php?toke
         .folder-empty { display: grid; place-items: center; background: var(--bs-tertiary-bg); }
         .folder-empty i { font-size: 3.5rem; color: var(--bs-primary); opacity: 0.85; }
         @media (max-width: 575.98px) { .folder-mosaic { height: 150px; } }
+        /* Folder mosaics stay muted until the pointer is on the card (devices with a mouse only) */
+        @media (hover: hover) {
+            .folder-mosaic { filter: saturate(0.4); opacity: 0.75; transition: filter 0.2s ease, opacity 0.2s ease; }
+            .folder-card:hover .folder-mosaic, .folder-card.drag-over .folder-mosaic, .folder-card:focus-within .folder-mosaic { filter: none; opacity: 1; }
+        }
+        /* Caption strip of link and folder cards in the tint of the selected tree folder */
+        .card-caption { background: var(--bs-primary-bg-subtle); border-bottom-left-radius: inherit; border-bottom-right-radius: inherit; }
+        .card-caption .border-top { border-top-color: var(--bs-primary-border-subtle) !important; }
+        .list-view-active .card-caption { background: transparent; }
+        .list-view-active .card-caption .border-top { border-top-color: var(--bs-border-color) !important; }
         .bulk-checkbox-container { position: absolute; top: 12px; left: 12px; z-index: 10; background: var(--bs-body-bg); border-radius: 6px; padding: 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; }
         
         /* Enhanced List View */

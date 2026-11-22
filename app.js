@@ -173,7 +173,7 @@ function folderCardHtml(node) {
         <div class="card bg-body border-0 shadow-sm h-100 folder-card" style="cursor: pointer;"
              data-nav="${p}" data-drop-folder="${p}" data-drag-folder="${p}" draggable="true">
             ${mosaicHtml(folderPreviews[node.path] || [])}
-            <div class="d-flex align-items-center px-3 py-2">
+            <div class="card-caption d-flex align-items-center px-3 py-2">
                 <i class="bi bi-folder-fill fs-5 text-primary me-2"></i>
                 <div style="min-width:0;" class="me-1">
                     <h6 class="fw-bold m-0 text-truncate" title="${esc(node.name)}">${esc(node.name)}</h6>
@@ -228,7 +228,7 @@ function bookmarkCardHtml(b, isSearch) {
                 <input class="form-check-input bulk-checkbox m-0 border-secondary" type="checkbox" value="${id}"${checked} style="width: 1.1rem; height: 1.1rem; cursor: pointer;">
             </div>
             ${previewHtml(b, id, domain)}
-            <div class="card-body p-3 d-flex flex-column">
+            <div class="card-body card-caption p-3 d-flex flex-column">
                 <div class="card-content">
                     <h5 class="card-title mb-1" title="${esc(b.title)}">${favicon}${esc(b.title)}</h5>
                     <div class="card-meta text-muted mb-3 d-flex flex-wrap align-items-center gap-1">${folderBadge}${tags}</div>
